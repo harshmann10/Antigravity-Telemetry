@@ -1,0 +1,41 @@
+{
+  "name": "antigravity-telemetry",
+  "displayName": "Antigravity Telemetry",
+  "description": "Live context window usage, prompt cache hit rate, and token intelligence for Antigravity",
+  "version": "1.0.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "scripts": {
+    "link": "node link-extensions.js",
+    "unlink": "node unlink-extensions.js"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "antigravity.showMenu",
+        "title": "Antigravity: Show Telemetry Menu"
+      },
+      {
+        "command": "antigravity.openDashboard",
+        "title": "Antigravity: Open Visual Dashboard"
+      },
+      {
+        "command": "antigravity.refresh",
+        "title": "Antigravity: Refresh Telemetry"
+      },
+      {
+        "command": "antigravity.deleteConversation",
+        "title": "Antigravity: Delete Conversation (Free Storage)"
+      }
+    ]
+  }
+}
