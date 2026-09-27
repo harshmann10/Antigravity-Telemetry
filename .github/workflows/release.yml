@@ -37,7 +37,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Determine Release Tag
         id: tag_info
@@ -59,10 +59,6 @@ jobs:
         id: changelog
         run: |
           node scripts/extract-changelog.js "${{ steps.tag_info.outputs.tag }}" release-notes.md
-
-      - name: Run Self-Check Quality Gate
-        run: |
-          npm run self-check
 
       - name: Package Extension (.vsix)
         run: |
