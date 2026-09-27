@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag / version to release (e.g. v1.0.0; leave blank to use git tag or package.json version)'
+        required: false
+        default: ''
+      draft:
+        description: 'Create draft release'
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Create prerelease'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Package and Release VSIX
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Determine Release Tag
+        id: tag_info
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$INPUT_TAG" ]; then
+            TAG="$INPUT_TAG"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            PKG_VER=$(node -p "require('./package.json').version")
+            TAG="v${PKG_VER}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using tag: ${TAG}"
+
+      - name: Extract Release Notes from CHANGELOG.md
+        id: changelog
+        run: |
+          node scripts/extract-changelog.js "${{ steps.tag_info.outputs.tag }}" release-notes.md
+
+      - name: Run Self-Check Quality Gate
+        run: |
+          npm run self-check
+
+      - name: Package Extension (.vsix)
+        run: |
+          rm -f *.vsix
+          npm run build:css
+          npm run package
+
+      - name: Locate VSIX Package
+        id: vsix_asset
+        run: |
+          VSIX_FILE=$(ls -1 *.vsix 2>/dev/null | head -n 1)
+          if [ -z "$VSIX_FILE" ] || [ ! -f "$VSIX_FILE" ]; then
+            echo "::error::No .vsix package was generated!" >&2
+            exit 1
+          fi
+          echo "file=${VSIX_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Found VSIX package: ${VSIX_FILE}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_info.outputs.tag }}
+          name: Antigravity Telemetry ${{ steps.tag_info.outputs.tag }}
+          body_path: release-notes.md
+          files: ${{ steps.vsix_asset.outputs.file }}
+          draft: ${{ inputs.draft || false }}
+          prerelease: ${{ inputs.prerelease || false }}
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

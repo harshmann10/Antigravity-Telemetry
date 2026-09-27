@@ -16,9 +16,36 @@
   "main": "./extension.js",
   "scripts": {
     "link": "node link-extensions.js",
-    "unlink": "node unlink-extensions.js"
+    "unlink": "node unlink-extensions.js",
+    "build:css": "npx --yes tailwindcss@3.4.17 -i media/tailwind-input.css -o media/dashboard.css --minify --content \"./dashboardHtml.js\"",
+    "self-check": "node scripts/self-check.js",
+    "package": "npx --yes @vscode/vsce package --allow-missing-repository --skip-license"
   },
   "contributes": {
+    "configuration": {
+      "title": "Antigravity Telemetry",
+      "properties": {
+        "antigravity.deleteToRecycleBin": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Move conversation files to the Windows Recycle Bin instead of deleting them permanently. Restoring a conversation also requires its `conversation_summaries` catalog row, so a restored chat may need to be re-opened from Antigravity's history."
+        },
+        "antigravity.workspaceFilter": {
+          "type": "string",
+          "enum": [
+            "current",
+            "all"
+          ],
+          "default": "current",
+          "markdownDescription": "Filter conversations and active chat telemetry to the current workspace project (\"current\") or show conversations from all workspaces (\"all\")."
+        },
+        "antigravity.sqlitePath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Custom path to the sqlite3 CLI executable. If left empty, Antigravity Telemetry searches common directories (e.g. adb platform-tools) and system PATH automatically."
+        }
+      }
+    },
     "commands": [
       {
         "command": "antigravity.showMenu",
@@ -35,6 +62,14 @@
       {
         "command": "antigravity.deleteConversation",
         "title": "Antigravity: Delete Conversation (Free Storage)"
+      },
+      {
+        "command": "antigravity.setSqlitePath",
+        "title": "Antigravity: Configure sqlite3 Path"
+      },
+      {
+        "command": "antigravity.showLogs",
+        "title": "Antigravity: Show Logs"
       }
     ]
   }

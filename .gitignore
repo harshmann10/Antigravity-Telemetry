@@ -1,0 +1,10 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+*.vsix
+release-notes.md
+
+# OS files
+.DS_Store
+Thumbs.db

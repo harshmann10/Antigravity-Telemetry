@@ -1,7 +1,36 @@
 // HTML Webview generator with split-window / narrow-screen optimization, live message passing,
-// dual-layer interactive context graph with hover crosshair/tooltip, compact cost pill, and session intelligence metrics.
+// dual-layer interactive context graph with hover crosshair/tooltip, and session intelligence metrics.
 
-function getDashboardHtml(conversations, activeId) {
+function getDashboardHtml(conversations, activeId, options = {}) {
+  const {
+    cssUri = '',
+    nonce = '',
+    cspSource = '',
+    deleteToRecycleBin = true
+  } = options;
+
+  // Wording follows the actual delete behaviour so the modal never claims something irreversible
+  // when files are going to the Recycle Bin.
+  const delButtonLabel = deleteToRecycleBin ? 'Move to Recycle Bin' : 'Delete Permanently';
+  const delHeading = deleteToRecycleBin ? 'Remove Conversation' : 'Permanently Delete Conversation';
+  const delQuestion = deleteToRecycleBin
+    ? 'The database, transcripts and artifacts are moved to the Recycle Bin, so you can restore them if needed.'
+    : 'This permanently erases the database, transcripts and artifacts. It cannot be undone.';
+  const delFilesNote = deleteToRecycleBin
+    ? 'Storage to be moved to the Recycle Bin:'
+    : 'Storage to be permanently wiped:';
+  const delTooltip = deleteToRecycleBin
+    ? 'Remove this conversation (files go to the Recycle Bin)'
+    : 'Permanently delete this conversation and all stored files';
+  const delSizeNote = deleteToRecycleBin ? 'Storage to be moved:' : 'Storage to be reclaimed:';
+
+  // Serialise state for the webview without letting user-controlled text (chat titles) break out
+  // of the <script> block via "</script>", U+2028 or U+2029.
+  const safeJson = value => JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+
   let globalInput = 0, globalCached = 0, globalOutput = 0;
   for (const c of conversations) {
     if (!c.stats) continue;
@@ -18,27 +47,23 @@ function getDashboardHtml(conversations, activeId) {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Antigravity Telemetry</title>
-  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}'; img-src ${cspSource} data:;">
+  <link rel="stylesheet" href="${cssUri}">
+  ${cssUri ? '' : `<!-- media/dashboard.css is missing: keep the page readable rather than unstyled. -->
   <style>
-    body {
-      background-color: var(--vscode-editor-background, #18181b);
-      color: var(--vscode-editor-foreground, #f4f4f5);
-      font-family: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif);
-      user-select: none;
-    }
+    body { background-color: var(--vscode-editor-background, #18181b); color: var(--vscode-editor-foreground, #f4f4f5); font-family: var(--vscode-font-family, sans-serif); padding: 12px; }
     .card-bg { background-color: var(--vscode-sideBar-background, #202023); }
     .inner-bg { background-color: var(--vscode-editor-background, #18181b); }
     .border-color { border-color: var(--vscode-sideBar-border, #3f3f46); }
     .muted-color { color: var(--vscode-descriptionForeground, #a1a1aa); }
-    .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-    .custom-scrollbar::-webkit-scrollbar-thumb { background-color: var(--vscode-scrollbarSlider-background, #3f3f46); border-radius: 9999px; }
-  </style>
+    .hidden { display: none; }
+  </style>`}
 </head>
-<body class="p-3 custom-scrollbar text-sm antialiased">
-  <div class="max-w-5xl mx-auto space-y-3">
+<body class="h-screen overflow-hidden p-3 custom-scrollbar text-sm antialiased flex flex-col">
+  <div class="max-w-5xl w-full mx-auto flex flex-col flex-1 min-h-0 space-y-3">
     
     <!-- Top Header & Controls -->
-    <div class="p-3 card-bg border border-color rounded-xl shadow-sm space-y-3">
+    <div class="p-3 card-bg border border-color rounded-xl shadow-sm space-y-3 shrink-0">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2.5">
           <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-base border border-emerald-500/30">
@@ -51,35 +76,59 @@ function getDashboardHtml(conversations, activeId) {
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span> Live
               </span>
             </div>
-            <p class="text-[11px] muted-color">Total: <span id="headerTotalTokens" class="text-emerald-400 font-semibold">${(globalTokens / 1_000_000).toFixed(1)}M tok</span> · Cache: <span id="headerHitRate" class="text-blue-400 font-semibold">${globalHitRate}%</span></p>
+            <p class="text-[11px] muted-color">Total: <span id="headerTotalTokens" class="text-emerald-400 font-semibold">${(globalTokens / 1_000_000).toFixed(1)}M tok</span><span id="headerExcludedTokens" class="text-zinc-400 font-medium"></span> · Cache: <span id="headerHitRate" class="text-blue-400 font-semibold">${globalHitRate}%</span></p>
           </div>
         </div>
 
-        <!-- Navigation Tabs -->
-        <div class="flex items-center gap-1 p-1 inner-bg border border-color rounded-lg text-xs">
-          <button id="tabDetailBtn" onclick="switchTab('detail')" 
-            class="px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm">
-            📊 Chat Telemetry
-          </button>
-          <button id="tabListBtn" onclick="switchTab('list')" 
-            class="px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]">
-            🗂️ All Sessions (${conversations.length})
-          </button>
+        <div class="flex flex-wrap items-center gap-2">
+          <!-- View Chip (Transient per-session filter) -->
+          <div class="flex items-center gap-1 p-0.5 inner-bg border border-color rounded-lg text-xs">
+            <button id="chipAllBtn" class="px-2 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm text-[11px]">
+              All (<span id="countAll">${conversations.length}</span>)
+            </button>
+            <button id="chipChatsBtn" class="px-2 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)] text-[11px]">
+              Chats (<span id="countChats">${conversations.filter(c => !c.isSubagent).length}</span>)
+            </button>
+            <button id="chipSubagentsBtn" class="px-2 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)] text-[11px]">
+              Subagents (<span id="countSubagents">${conversations.filter(c => c.isSubagent).length}</span>)
+            </button>
+          </div>
+
+          <!-- Navigation Tabs -->
+          <div class="flex items-center gap-1 p-1 inner-bg border border-color rounded-lg text-xs">
+            <button id="tabDetailBtn"
+              class="px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm">
+              📊 Chat Telemetry
+            </button>
+            <button id="tabListBtn"
+              class="px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]">
+              🗂️ All Sessions (<span id="tabListCount">${conversations.length}</span>)
+            </button>
+          </div>
         </div>
       </div>
 
-      <!-- Quick Conversation Selector Dropdown -->
-      <div class="flex items-center gap-2 pt-1 border-t border-color">
-        <span class="text-xs muted-color font-medium shrink-0">Viewing:</span>
-        <select id="chatSelect" onchange="selectConv(this.value)" 
-          class="w-full px-2.5 py-1.5 text-xs inner-bg border border-color rounded-lg font-medium text-[var(--vscode-editor-foreground,#f4f4f5)] focus:outline-none focus:border-blue-500 transition-colors">
-          <!-- Populated by JS -->
-        </select>
+      <!-- Quick Conversation Selector Dropdown & Workspace Filter -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 border-t border-color">
+        <div class="flex items-center gap-2 flex-1 min-w-0">
+          <span class="text-xs muted-color font-medium shrink-0">Viewing:</span>
+          <select id="chatSelect"
+            class="w-full max-w-xl min-w-0 truncate px-2.5 py-1.5 text-xs inner-bg border border-color rounded-lg font-medium text-[var(--vscode-editor-foreground,#f4f4f5)] focus:outline-none focus:border-blue-500 transition-colors">
+            <!-- Populated by JS -->
+          </select>
+        </div>
+        <div class="flex items-center gap-1.5 shrink-0">
+          <span class="text-xs muted-color font-medium shrink-0">Workspace:</span>
+          <select id="workspaceSelect"
+            class="max-w-xs truncate px-2.5 py-1.5 text-xs inner-bg border border-color rounded-lg font-medium text-[var(--vscode-editor-foreground,#f4f4f5)] focus:outline-none focus:border-blue-500 transition-colors">
+            <!-- Populated by JS -->
+          </select>
+        </div>
       </div>
     </div>
 
     <!-- TAB 1: Chat Telemetry Details (DIRECTLY AT TOP - ZERO SCROLLING) -->
-    <div id="detailView" class="space-y-3">
+    <div id="detailView" class="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1 custom-scrollbar">
       
       <!-- Selected Chat Overview Card -->
       <div class="p-3 card-bg border border-color rounded-xl shadow-sm">
@@ -87,18 +136,17 @@ function getDashboardHtml(conversations, activeId) {
           <div>
             <div class="flex flex-wrap items-center gap-2 mb-1">
               <span id="chatBadge" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">gemini-3.8-flash</span>
+              <span id="subagentBadge" class="hidden px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">🤖 <span id="chatAgentVal">subagent</span></span>
+              <span id="workspaceBadge" class="hidden px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">📁 <span id="chatWorkspaceVal">--</span></span>
               <span id="activePill" class="hidden px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">ACTIVE CHAT</span>
-              <span id="ghostPill" class="hidden px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">GHOST (DELETED IN ANTIGRAVITY)</span>
-              <span id="costBadge" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30" title="Estimated API cost at official rates">
-                Est. Cost: <span id="costVal" class="font-bold">$0.00</span>
-              </span>
               <span id="diskBadge" class="px-2 py-0.5 rounded text-[10px] font-medium inner-bg border border-color muted-color" title="Disk space used by this conversation (SQLite DB + Brain transcripts/artifacts + Annotations)">
                 Disk: <span id="chatDiskVal" class="text-zinc-300 font-semibold">0 MB</span>
               </span>
             </div>
+            <div id="subagentBreadcrumb" class="hidden text-xs muted-color mb-1.5 flex items-center gap-1.5 flex-wrap"></div>
             <div class="flex items-center gap-2.5">
               <h2 id="chatTitle" class="text-sm font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">Loading...</h2>
-              <button onclick="promptDeleteCurrent()" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/15 hover:bg-red-500/25 text-red-400 hover:text-red-300 border border-red-500/30 transition-colors flex items-center gap-1 shadow-sm shrink-0" title="Permanently delete this conversation and all stored files (free disk space)">
+              <button id="deleteChatBtn" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/15 hover:bg-red-500/25 text-red-400 hover:text-red-300 border border-red-500/30 transition-colors flex items-center gap-1 shadow-sm shrink-0" title="${delTooltip}">
                 🗑️ Delete Chat
               </button>
             </div>
@@ -107,7 +155,6 @@ function getDashboardHtml(conversations, activeId) {
           <div class="sm:text-right">
             <span class="text-[10px] muted-color">Total Tokens Processed</span>
             <div id="grandTotalText" class="text-lg font-black text-emerald-400">0</div>
-            <div class="text-[10px] muted-color">Saved: <span id="costSavedVal" class="text-emerald-400 font-semibold">$0.00</span> with cache</div>
           </div>
         </div>
 
@@ -115,8 +162,8 @@ function getDashboardHtml(conversations, activeId) {
         <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
           <div class="p-2.5 inner-bg border border-color rounded-lg">
             <div class="text-[10px] muted-color">Context Window</div>
-            <div id="kpiContext" class="text-base font-bold text-amber-400">0 / 255k</div>
-            <div id="kpiContextSub" class="text-[10px] muted-color">0% Fill (255k left)</div>
+            <div id="kpiContext" class="text-base font-bold text-amber-400">0 / 256k</div>
+            <div id="kpiContextSub" class="text-[10px] muted-color">0% Fill (256k left)</div>
           </div>
 
           <div class="p-2.5 inner-bg border border-color rounded-lg">
@@ -136,6 +183,23 @@ function getDashboardHtml(conversations, activeId) {
             <div id="kpiOutput" class="text-base font-bold text-emerald-400">0</div>
             <div id="kpiOutputSub" class="text-[10px] muted-color">Avg 0 tok / call</div>
           </div>
+        </div>
+      </div>
+
+      <!-- 🤖 Subagents & Background Workers Card (Shown when selected chat has spawned children) -->
+      <div id="subagentsCard" class="hidden p-3 card-bg border border-color rounded-xl space-y-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">🤖 Subagents & Background Workers</h3>
+            <span id="subagentsCountBadge" class="text-[10px] px-2 py-0.5 rounded inner-bg border border-color text-purple-300 font-semibold">0 subagents</span>
+          </div>
+          <div id="subagentsRolledUpTotal" class="text-xs font-semibold text-emerald-400">
+            <!-- Populated by JS: Parent (X) + Subagents (Y) = Z total -->
+          </div>
+        </div>
+
+        <div id="subagentsList" class="space-y-1.5">
+          <!-- Populated by JS -->
         </div>
       </div>
 
@@ -202,7 +266,7 @@ function getDashboardHtml(conversations, activeId) {
             </div>
             <div class="flex items-center gap-1">
               <span class="w-3 border-t border-dashed border-red-400 inline-block"></span>
-              <span class="text-red-400 font-medium">255k Limit</span>
+              <span id="chartCeilingLegend" class="text-red-400 font-medium">256k Limit</span>
             </div>
           </div>
         </div>
@@ -312,7 +376,7 @@ function getDashboardHtml(conversations, activeId) {
               </div>
               <div class="flex justify-between">
                 <span class="muted-color">Ceiling Limit:</span>
-                <span class="font-medium text-red-400 font-mono">255k limit</span>
+                <span id="metaCeilingLimit" class="font-medium text-red-400 font-mono">256k limit</span>
               </div>
             </div>
           </div>
@@ -343,28 +407,18 @@ function getDashboardHtml(conversations, activeId) {
     </div>
 
     <!-- TAB 2: All Sessions List (Shown only when user clicks tab) -->
-    <div id="listView" class="hidden p-3 card-bg border border-color rounded-xl space-y-3">
-      <div class="flex items-center justify-between">
-        <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Conversation History (${conversations.length} sessions)</h3>
-        <span class="text-[10px] muted-color">Click any session to view its telemetry</span>
+    <div id="listView" class="hidden flex-1 min-h-0 p-3 card-bg border border-color rounded-xl flex flex-col space-y-3">
+      <div class="flex items-center justify-between shrink-0">
+        <h3 id="listHeading" class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Conversation History (${conversations.length} sessions)</h3>
+        <span id="listSubHeading" class="text-[10px] muted-color">Click any session to view its telemetry</span>
       </div>
 
-      <!-- Orphan / Ghost Chats Warning Banner -->
-      <div id="orphanBanner" class="hidden p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2 text-xs text-amber-300">
-        <div class="flex items-center gap-1.5">
-          <span>⚠️</span>
-          <span>Found <strong id="orphanCount">0</strong> dead ghost chat(s) taking <strong id="orphanDisk">0 MB</strong>.</span>
-        </div>
-        <button onclick="purgeOrphans()" class="px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/40 text-[11px] font-semibold transition-colors flex items-center gap-1">
-          🧹 Purge Ghost Chats
-        </button>
+      <div class="shrink-0">
+        <input id="searchInput" type="text" placeholder="Search sessions by title or ID..." 
+          class="w-full px-3 py-2 text-xs inner-bg border border-color rounded-lg text-[var(--vscode-editor-foreground,#f4f4f5)] placeholder-[var(--vscode-input-placeholderForeground,#71717a)] focus:outline-none focus:border-blue-500" />
       </div>
 
-      <input id="searchInput" type="text" placeholder="Search sessions by title or ID..." 
-        class="w-full px-3 py-2 text-xs inner-bg border border-color rounded-lg text-[var(--vscode-editor-foreground,#f4f4f5)] placeholder-[var(--vscode-input-placeholderForeground,#71717a)] focus:outline-none focus:border-blue-500"
-        oninput="filterList()" />
-
-      <div id="convList" class="space-y-1.5 max-h-[600px] overflow-y-auto pr-1 custom-scrollbar">
+      <div id="convList" class="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1 custom-scrollbar">
         <!-- Populated by JS -->
       </div>
     </div>
@@ -376,75 +430,268 @@ function getDashboardHtml(conversations, activeId) {
     <div class="card-bg border border-red-500/40 rounded-xl p-4 max-w-md w-full space-y-3 shadow-2xl">
       <div class="flex items-center gap-2 text-red-400 font-bold text-sm">
         <span class="text-base">🗑️</span>
-        <span>Permanently Delete Conversation</span>
+        <span>${delHeading}</span>
       </div>
       <p class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)]">
-        Are you sure you want to permanently erase <strong id="delModalTitle" class="text-white"></strong>?
+        <strong id="delModalTitle" class="text-white"></strong>
       </p>
+      <p class="text-[11px] muted-color">${delQuestion}</p>
       <div id="delModalActiveWarning" class="hidden p-2 rounded bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-300">
         ⚠️ This is the currently active chat in Antigravity. Deleting it will terminate this session.
       </div>
       <div class="text-[11px] muted-color space-y-1 p-2.5 inner-bg rounded-lg border border-color">
-        <div class="text-[10px] uppercase font-bold text-red-400/90 mb-1">Storage to be permanently wiped:</div>
+        <div class="text-[10px] uppercase font-bold text-red-400/90 mb-1">${delFilesNote}</div>
         <div>• SQLite conversation database (<code class="text-zinc-300 font-mono">conversations/*.db</code>)</div>
         <div>• Transcripts, artifacts & media (<code class="text-zinc-300 font-mono">brain/*</code> folder)</div>
         <div>• Summary records & annotations (<code class="text-zinc-300 font-mono">*.pbtxt</code>)</div>
         <div class="text-emerald-400 font-medium pt-1.5 border-t border-color flex justify-between">
-          <span>Storage to be reclaimed:</span>
+          <span>${delSizeNote}</span>
           <span id="delModalSize" class="font-bold">-- MB</span>
         </div>
       </div>
       <div class="flex justify-end gap-2 pt-1">
-        <button onclick="closeDeleteModal()" class="px-3 py-1.5 rounded text-xs inner-bg border border-color muted-color hover:text-white transition-colors">
+        <button id="delModalCancelBtn" class="px-3 py-1.5 rounded text-xs inner-bg border border-color muted-color hover:text-white transition-colors">
           Cancel
         </button>
-        <button id="delModalConfirmBtn" onclick="confirmDeleteExec()" class="px-3 py-1.5 rounded text-xs bg-red-600 hover:bg-red-500 text-white font-semibold transition-colors flex items-center gap-1.5 shadow-sm">
-          🗑️ Delete Permanently
+        <button id="delModalConfirmBtn" class="px-3 py-1.5 rounded text-xs bg-red-600 hover:bg-red-500 text-white font-semibold transition-colors flex items-center gap-1.5 shadow-sm">
+          🗑️ ${delButtonLabel}
         </button>
       </div>
     </div>
   </div>
 
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
-    let CONVERSATIONS = ${JSON.stringify(conversations)};
-    let selectedId = "${activeId || (conversations[0] ? conversations[0].id : '')}";
-    let currentActiveId = "${activeId || ''}";
+    let CONVERSATIONS = ${safeJson(conversations)};
+    let selectedId = ${safeJson(activeId || (conversations[0] ? conversations[0].id : ''))};
+    let currentActiveId = ${safeJson(activeId || '')};
+    let currentWorkspaceFilter = ${safeJson(options.workspaceFilter || 'current')};
+    let currentWorkspaceName = ${safeJson(options.currentWorkspaceName || '')};
+    let currentWorkspacePaths = ${safeJson(options.currentWorkspacePaths || [])};
+    let currentSubagentFilter = 'all';
     let currentTab = 'detail';
     let currentTimeline = [];
     let pendingDeleteId = null;
+    let expandedDrawers = new Set();
+    let unattachedExpanded = false;
 
     window.addEventListener('message', event => {
       const msg = event.data;
-      if (msg && msg.type === 'telemetryUpdate') {
+      if (msg && msg.type === 'workspaceFilterConfigUpdate') {
+        if (msg.workspaceFilter) {
+          currentWorkspaceFilter = msg.workspaceFilter;
+          const filtered = getFilteredConversations();
+          if (filtered.length > 0 && !filtered.some(c => c.id === selectedId)) {
+            selectedId = filtered[0].id;
+          }
+          populateWorkspaceDropdown();
+          populateDropdown();
+          filterList();
+          renderDetail();
+          updateGlobalHeaders();
+        }
+      } else if (msg && msg.type === 'telemetryUpdate') {
         CONVERSATIONS = msg.data;
         if (msg.activeId) {
           currentActiveId = msg.activeId;
         }
-        if (!CONVERSATIONS.some(c => c.id === selectedId)) {
-          selectedId = currentActiveId || (CONVERSATIONS[0] ? CONVERSATIONS[0].id : '');
+        if (msg.currentWorkspaceName !== undefined) {
+          currentWorkspaceName = msg.currentWorkspaceName;
         }
-        updateGlobalHeaders();
+        if (msg.currentWorkspacePaths !== undefined) {
+          currentWorkspacePaths = Array.isArray(msg.currentWorkspacePaths) ? msg.currentWorkspacePaths : [];
+        }
+        if (!CONVERSATIONS.some(c => c.id === selectedId)) {
+          const filtered = getFilteredConversations();
+          selectedId = currentActiveId && filtered.some(c => c.id === currentActiveId)
+            ? currentActiveId
+            : (filtered[0] ? filtered[0].id : (CONVERSATIONS[0] ? CONVERSATIONS[0].id : ''));
+        }
+        populateWorkspaceDropdown();
         populateDropdown();
         filterList();
         renderDetail();
+        updateGlobalHeaders();
       }
     });
 
-    function updateGlobalHeaders() {
-      let gInput = 0, gCached = 0, gOutput = 0;
-      for (const c of CONVERSATIONS) {
-        if (!c.stats) continue;
-        gInput += c.stats.totalInput || 0;
-        gCached += c.stats.totalCached || 0;
-        gOutput += c.stats.totalOutput || 0;
+    function normWorkspacePath(p) {
+      if (!p || typeof p !== 'string') return '';
+      const backslash = String.fromCharCode(92);
+      let s = p.split(backslash).join('/').toLowerCase();
+      while (s.indexOf('//') !== -1) {
+        s = s.split('//').join('/');
       }
+      while (s.endsWith('/') && s.length > 1) {
+        s = s.slice(0, -1);
+      }
+      return s;
+    }
+
+    function setSubagentFilter(filter) {
+      currentSubagentFilter = filter;
+      const chipAll = document.getElementById('chipAllBtn');
+      const chipChats = document.getElementById('chipChatsBtn');
+      const chipSubs = document.getElementById('chipSubagentsBtn');
+      const activeCls = 'px-2 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm text-[11px]';
+      const inactiveCls = 'px-2 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)] text-[11px]';
+
+      if (chipAll) chipAll.className = filter === 'all' ? activeCls : inactiveCls;
+      if (chipChats) chipChats.className = filter === 'chats' ? activeCls : inactiveCls;
+      if (chipSubs) chipSubs.className = filter === 'subagents' ? activeCls : inactiveCls;
+
+      populateDropdown();
+      filterList();
+      updateGlobalHeaders();
+    }
+
+    function getWorkspaceFilteredConversations() {
+      if (currentWorkspaceFilter === 'all') {
+        return CONVERSATIONS;
+      }
+      if (currentWorkspaceFilter.startsWith('ws:')) {
+        const targetWs = currentWorkspaceFilter.slice(3).toLowerCase();
+        return CONVERSATIONS.filter(c => (c.workspaceName || '').toLowerCase() === targetWs);
+      }
+      // 'current' workspace filter: match by path-prefix predicate
+      if (!currentWorkspacePaths || currentWorkspacePaths.length === 0) {
+        return CONVERSATIONS;
+      }
+      const sep = '/';
+      const curNormPaths = currentWorkspacePaths.map(normWorkspacePath).filter(Boolean);
+      if (curNormPaths.length === 0) {
+        return CONVERSATIONS;
+      }
+
+      return CONVERSATIONS.filter(c => {
+        const paths = c.workspacePaths;
+        if (!Array.isArray(paths) || paths.length === 0) return false;
+        for (const rawP of paths) {
+          const normP = normWorkspacePath(rawP);
+          if (!normP) continue;
+          for (const cur of curNormPaths) {
+            if (normP === cur || cur.startsWith(normP + sep) || normP.startsWith(cur + sep)) {
+              return true;
+            }
+          }
+        }
+        return false;
+      });
+    }
+
+    function getFilteredConversations() {
+      const list = getWorkspaceFilteredConversations();
+      if (currentSubagentFilter === 'chats') {
+        return list.filter(c => !c.isSubagent);
+      }
+      if (currentSubagentFilter === 'subagents') {
+        return list.filter(c => c.isSubagent);
+      }
+      return list;
+    }
+
+    function populateWorkspaceDropdown() {
+      const select = document.getElementById('workspaceSelect');
+      if (!select) return;
+      select.innerHTML = '';
+
+      const wsMap = new Map();
+      for (const c of CONVERSATIONS) {
+        const name = c.workspaceName;
+        if (name) {
+          wsMap.set(name, (wsMap.get(name) || 0) + 1);
+        }
+      }
+
+      const optCurrent = document.createElement('option');
+      optCurrent.value = 'current';
+      optCurrent.textContent = currentWorkspaceName 
+        ? 'Current (' + currentWorkspaceName + ')' 
+        : 'Current Workspace';
+      select.appendChild(optCurrent);
+
+      const optAll = document.createElement('option');
+      optAll.value = 'all';
+      optAll.textContent = 'All Workspaces (' + CONVERSATIONS.length + ')';
+      select.appendChild(optAll);
+
+      for (const [wsName, count] of wsMap.entries()) {
+        const optWs = document.createElement('option');
+        optWs.value = 'ws:' + wsName;
+        optWs.textContent = wsName + ' (' + count + ')';
+        select.appendChild(optWs);
+      }
+
+      let hasMatch = false;
+      for (let i = 0; i < select.options.length; i++) {
+        if (select.options[i].value === currentWorkspaceFilter) {
+          select.selectedIndex = i;
+          hasMatch = true;
+          break;
+        }
+      }
+      if (!hasMatch) {
+        select.value = 'current';
+      }
+    }
+
+    function updateGlobalHeaders() {
+      const wsList = getWorkspaceFilteredConversations();
+      const allCount = wsList.length;
+      const chatsCount = wsList.filter(c => !c.isSubagent).length;
+      const subsCount = wsList.filter(c => c.isSubagent).length;
+
+      const elAll = document.getElementById('countAll');
+      const elChats = document.getElementById('countChats');
+      const elSubs = document.getElementById('countSubagents');
+      const elTabCount = document.getElementById('tabListCount');
+      if (elAll) elAll.textContent = allCount;
+      if (elChats) elChats.textContent = chatsCount;
+      if (elSubs) elSubs.textContent = subsCount;
+      if (elTabCount) elTabCount.textContent = allCount;
+
+      let gInput = 0, gCached = 0, gOutput = 0;
+      let excludedInput = 0, excludedOutput = 0;
+
+      for (const c of wsList) {
+        if (!c.stats) continue;
+        const inp = c.stats.totalInput || 0;
+        const out = c.stats.totalOutput || 0;
+        const cac = c.stats.totalCached || 0;
+
+        let included = true;
+        if (currentSubagentFilter === 'chats' && c.isSubagent) included = false;
+        if (currentSubagentFilter === 'subagents' && !c.isSubagent) included = false;
+
+        if (included) {
+          gInput += inp;
+          gCached += cac;
+          gOutput += out;
+        } else {
+          excludedInput += inp;
+          excludedOutput += out;
+        }
+      }
+
       const gTot = gInput + gOutput;
+      const excludedTot = excludedInput + excludedOutput;
       const gHit = gInput > 0 ? ((gCached / gInput) * 100).toFixed(1) : '0.0';
+
       const elTot = document.getElementById('headerTotalTokens');
       const elHit = document.getElementById('headerHitRate');
+      const elExcluded = document.getElementById('headerExcludedTokens');
+
       if (elTot) elTot.textContent = (gTot / 1_000_000).toFixed(1) + 'M tok';
       if (elHit) elHit.textContent = gHit + '%';
+      if (elExcluded) {
+        if (currentSubagentFilter === 'chats' && excludedTot > 0) {
+          elExcluded.textContent = ' · +' + (excludedTot / 1_000_000).toFixed(1) + 'M in subagents';
+        } else if (currentSubagentFilter === 'subagents' && excludedTot > 0) {
+          elExcluded.textContent = ' · +' + (excludedTot / 1_000_000).toFixed(1) + 'M in chats';
+        } else {
+          elExcluded.textContent = '';
+        }
+      }
     }
 
     function switchTab(tab) {
@@ -472,39 +719,93 @@ function getDashboardHtml(conversations, activeId) {
 
     function populateDropdown() {
       const select = document.getElementById('chatSelect');
+      if (!select) return;
       select.innerHTML = '';
-      CONVERSATIONS.forEach(c => {
+      const list = getFilteredConversations();
+      if (list.length === 0 && !selectedId) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No sessions in current view';
+        select.appendChild(opt);
+        return;
+      }
+      const displayList = list.slice();
+      if (selectedId && !displayList.some(c => c.id === selectedId)) {
+        const selConv = CONVERSATIONS.find(c => c.id === selectedId);
+        if (selConv) {
+          displayList.unshift(selConv);
+        }
+      }
+      displayList.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.id;
         const isAct = c.id === currentActiveId ? ' (ACTIVE)' : '';
-        const orphanMark = c.isOrphan ? ' [GHOST]' : '';
-        const tokM = c.stats ? (c.stats.grandTotal / 1_000_000).toFixed(1) + 'M' : '0';
-        const hit = c.stats ? c.stats.cacheHitRate + '%' : '0%';
-        const sz = c.storageMB ? c.storageMB + 'MB · ' : '';
-        opt.textContent = (c.title || 'Untitled') + isAct + orphanMark + ' — ' + sz + tokM + ' tok (' + hit + ' cache)';
+        const wsPrefix = (currentWorkspaceFilter === 'all' && c.workspaceName) ? '[' + c.workspaceName + '] ' : '';
+        const tokM = c.stats ? (c.stats.grandTotal / 1_000_000).toFixed(1) + 'M' : '0M';
+        const hit = c.stats ? Math.round(parseFloat(c.stats.cacheHitRate) || 0) + '%' : '0%';
+
+        let titleText = '';
+        let fullTitle = '';
+        if (c.isSubagent) {
+          const agent = c.agentName || 'subagent';
+          const hasTitle = c.title && c.title !== '<original_task>' && c.title.trim() !== agent;
+          if (hasTitle) {
+            let tClean = c.title.trim();
+            if (tClean.length > 28) tClean = tClean.slice(0, 26).trim() + '…';
+            titleText = '🤖 [' + agent + '] ' + tClean;
+            fullTitle = '🤖 [' + agent + '] ' + c.title.trim();
+          } else {
+            titleText = '🤖 [' + agent + ']';
+            fullTitle = '🤖 [' + agent + ']';
+          }
+        } else {
+          fullTitle = c.title || 'Untitled';
+          let t = fullTitle.trim();
+          if (t.length > 36) {
+            t = t.slice(0, 34).trim() + '…';
+          }
+          titleText = t;
+        }
+
+        opt.textContent = wsPrefix + titleText + isAct + ' · ' + tokM + ' (' + hit + ' cache)';
+        opt.title = (wsPrefix ? wsPrefix : '') + fullTitle + isAct + ' — ' + (c.storageMB ? c.storageMB + 'MB · ' : '') + tokM + ' tok (' + (c.stats ? c.stats.cacheHitRate : 0) + '% cache)';
         if (c.id === selectedId) opt.selected = true;
         select.appendChild(opt);
       });
+      if (selectedId) {
+        select.value = selectedId;
+        const cur = CONVERSATIONS.find(c => c.id === selectedId);
+        if (cur) {
+          select.title = (cur.isSubagent ? '🤖 [' + (cur.agentName || 'subagent') + '] ' : '') + (cur.title || 'Untitled');
+        }
+      }
     }
 
     function selectConv(id) {
       selectedId = id;
-      const select = document.getElementById('chatSelect');
-      if (select) select.value = id;
+      populateDropdown();
       renderDetail();
       if (currentTab === 'list') {
         switchTab('detail');
       }
     }
 
-    function renderList(items) {
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function renderList(wsList, q) {
       const container = document.getElementById('convList');
+      if (!container) return;
       container.innerHTML = '';
-      if (!items || items.length === 0) {
+
+      if (!wsList || wsList.length === 0) {
         container.innerHTML = '<div class="text-xs muted-color p-4 text-center">No sessions found</div>';
         return;
       }
-      items.forEach(c => {
+
+      function createConvRow(c, isChild) {
         const isSel = c.id === selectedId;
         const isAct = c.id === currentActiveId;
         const div = document.createElement('div');
@@ -515,23 +816,43 @@ function getDashboardHtml(conversations, activeId) {
         );
         div.onclick = () => selectConv(c.id);
 
-        const title = c.title || 'Untitled';
         const totalM = c.stats ? (c.stats.grandTotal / 1_000_000).toFixed(1) : '0';
         const hitRate = c.stats ? c.stats.cacheHitRate : '0';
         const storageMB = c.storageMB ? c.storageMB + ' MB' : '-- MB';
-        const isOrphan = Boolean(c.isOrphan);
-        const orphanBadge = isOrphan ? '<span class="text-[9px] font-bold px-1 rounded bg-amber-500/20 text-amber-300 shrink-0">GHOST</span>' : '';
+        const wsName = c.workspaceName || '';
+        const wsBadge = wsName && currentWorkspaceFilter === 'all'
+          ? '<span class="text-[9px] font-medium px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 shrink-0" title="Workspace: ' + escapeHtml(wsName) + '">📁 ' + escapeHtml(wsName) + '</span>'
+          : '';
+
+        let titleHtml = '';
+        if (c.isSubagent) {
+          const agentLabel = escapeHtml(c.agentName || 'subagent');
+          const hasTitle = c.title && c.title !== '<original_task>' && c.title.trim() !== c.agentName;
+          const cleanTitle = hasTitle ? c.title.trim() : '';
+          let displayTitle = cleanTitle;
+          if (displayTitle.length > 38) {
+            displayTitle = displayTitle.slice(0, 36).trim() + '…';
+          }
+          const taskSpan = displayTitle
+            ? '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(cleanTitle) + '">' + escapeHtml(displayTitle) + '</span>'
+            : '';
+          titleHtml = 
+            '<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">🤖 ' + agentLabel + '</span>' +
+            taskSpan;
+        } else {
+          titleHtml = '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(c.title || 'Untitled') + '">' + escapeHtml(c.title || 'Untitled') + '</span>';
+        }
 
         div.innerHTML = 
-          '<div class="flex items-center justify-between gap-1 mb-1">' +
-            '<div class="flex items-center gap-1.5 truncate max-w-[280px]">' +
-              '<span class="font-medium text-xs truncate ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '">' + escapeHtml(title) + '</span>' +
-              orphanBadge +
+          '<div class="flex items-center justify-between gap-2 mb-1">' +
+            '<div class="flex items-center gap-1.5 min-w-0 flex-1">' +
+              titleHtml +
+              wsBadge +
             '</div>' +
             '<div class="flex items-center gap-1.5 shrink-0">' +
               (isAct ? '<span class="text-[9px] font-bold px-1 rounded bg-emerald-500/20 text-emerald-400">ACTIVE</span>' : '') +
               '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ' + (hitRate > 90 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400') + '">' + hitRate + '%</span>' +
-              '<button class="del-btn p-1 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors text-xs" title="Permanently wipe this conversation and free disk space">🗑️</button>' +
+              '<button class="del-btn p-1 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors text-xs" title="${delTooltip}">🗑️</button>' +
             '</div>' +
           '</div>' +
           '<div class="flex items-center justify-between text-[10px] muted-color">' +
@@ -549,35 +870,200 @@ function getDashboardHtml(conversations, activeId) {
             openDeleteModal(c.id);
           };
         }
+        return div;
+      }
 
-        container.appendChild(div);
+      if (currentSubagentFilter === 'chats') {
+        const chats = wsList.filter(c => !c.isSubagent);
+        const filtered = q
+          ? chats.filter(c => (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q))
+          : chats;
+        if (filtered.length === 0) {
+          container.innerHTML = '<div class="text-xs muted-color p-4 text-center">No chats match filter</div>';
+          return;
+        }
+        filtered.forEach(c => container.appendChild(createConvRow(c, false)));
+        return;
+      }
+
+      if (currentSubagentFilter === 'subagents') {
+        const subs = wsList.filter(c => c.isSubagent);
+        const filtered = q
+          ? subs.filter(c => (c.agentName || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q))
+          : subs;
+        if (filtered.length === 0) {
+          container.innerHTML = '<div class="text-xs muted-color p-4 text-center">No subagents match filter</div>';
+          return;
+        }
+        filtered.forEach(c => {
+          container.appendChild(createConvRow(c, true));
+        });
+        return;
+      }
+
+      // Default: 'all' mode with NESTED DRAWERS and UNATTACHED GROUP
+      const humanChats = wsList.filter(c => !c.isSubagent);
+      const allSubagents = wsList.filter(c => c.isSubagent);
+
+      const parentToChildren = new Map();
+      const unattached = [];
+
+      allSubagents.forEach(s => {
+        const pId = s.parentConversationId;
+        if (pId && humanChats.some(h => h.id === pId)) {
+          if (!parentToChildren.has(pId)) parentToChildren.set(pId, []);
+          parentToChildren.get(pId).push(s);
+        } else {
+          unattached.push(s);
+        }
       });
-    }
 
-    function escapeHtml(str) {
-      if (!str) return '';
-      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      // Handle search filtering
+      let visibleHumans = humanChats;
+      let visibleUnattached = unattached;
+
+      if (q) {
+        visibleHumans = humanChats.filter(h => {
+          const hMatch = (h.title || '').toLowerCase().includes(q) || (h.id || '').toLowerCase().includes(q);
+          const children = parentToChildren.get(h.id) || [];
+          const cMatch = children.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
+          if (cMatch) expandedDrawers.add(h.id);
+          return hMatch || cMatch;
+        });
+
+        visibleUnattached = unattached.filter(u => {
+          const uMatch = (u.agentName || '').toLowerCase().includes(q) || (u.title || '').toLowerCase().includes(q) || (u.id || '').toLowerCase().includes(q);
+          if (uMatch) unattachedExpanded = true;
+          return uMatch;
+        });
+      }
+
+      if (visibleHumans.length === 0 && visibleUnattached.length === 0) {
+        container.innerHTML = '<div class="text-xs muted-color p-4 text-center">No sessions match search</div>';
+        return;
+      }
+
+      visibleHumans.forEach(h => {
+        const row = createConvRow(h, false);
+        container.appendChild(row);
+
+        const children = parentToChildren.get(h.id) || [];
+        if (children.length > 0) {
+          const cTok = children.reduce((sum, ch) => sum + (ch.stats ? ch.stats.grandTotal : 0), 0);
+          const cStorage = children.reduce((sum, ch) => sum + (parseFloat(ch.storageMB) || 0), 0).toFixed(1);
+          const isExp = expandedDrawers.has(h.id);
+
+          const drawerWrap = document.createElement('div');
+          drawerWrap.className = 'mb-2';
+
+          const toggle = document.createElement('div');
+          toggle.className = 'drawer-toggle flex items-center justify-between px-3 py-1.5 ml-3 rounded-lg border border-color inner-bg/80 cursor-pointer hover:border-purple-500/40 text-xs transition-colors';
+          toggle.innerHTML = 
+            '<div class="flex items-center gap-1.5 text-purple-300 font-medium">' +
+              '<span class="drawer-arrow text-[11px]">' + (isExp ? '▾' : '▸') + '</span>' +
+              '<span>🤖</span>' +
+              '<span>' + children.length + ' subagent' + (children.length > 1 ? 's' : '') + '</span>' +
+              '<span class="muted-color font-mono">· ' + formatTok(cTok) + ' tok · ' + cStorage + ' MB</span>' +
+            '</div>' +
+            '<span class="text-[10px] muted-color">' + (isExp ? 'Hide' : 'Show') + '</span>';
+
+          const childListDiv = document.createElement('div');
+          childListDiv.className = 'space-y-1.5 ml-5 mt-1 border-l-2 border-purple-500/30 pl-2.5 ' + (isExp ? '' : 'hidden');
+
+          children.forEach(ch => {
+            const childRow = createConvRow(ch, true, null);
+            childListDiv.appendChild(childRow);
+          });
+
+          toggle.onclick = (e) => {
+            e.stopPropagation();
+            if (expandedDrawers.has(h.id)) {
+              expandedDrawers.delete(h.id);
+            } else {
+              expandedDrawers.add(h.id);
+            }
+            const nowExp = expandedDrawers.has(h.id);
+            childListDiv.classList.toggle('hidden', !nowExp);
+            const arrow = toggle.querySelector('.drawer-arrow');
+            if (arrow) arrow.textContent = nowExp ? '▾' : '▸';
+            const hint = toggle.querySelector('span:last-child');
+            if (hint) hint.textContent = nowExp ? 'Hide' : 'Show';
+          };
+
+          drawerWrap.appendChild(toggle);
+          drawerWrap.appendChild(childListDiv);
+          container.appendChild(drawerWrap);
+        }
+      });
+
+      if (visibleUnattached.length > 0) {
+        const uTok = visibleUnattached.reduce((sum, ch) => sum + (ch.stats ? ch.stats.grandTotal : 0), 0);
+        const uStorage = visibleUnattached.reduce((sum, ch) => sum + (parseFloat(ch.storageMB) || 0), 0).toFixed(1);
+
+        const unWrap = document.createElement('div');
+        unWrap.className = 'mt-3 mb-2';
+
+        const unToggle = document.createElement('div');
+        unToggle.className = 'unattached-toggle flex items-center justify-between px-3 py-2 rounded-lg border border-amber-500/30 bg-amber-500/10 cursor-pointer hover:bg-amber-500/15 text-xs transition-colors';
+        unToggle.innerHTML = 
+          '<div class="flex items-center gap-1.5 text-amber-300 font-medium">' +
+            '<span class="unattached-arrow text-[11px]">' + (unattachedExpanded ? '▾' : '▸') + '</span>' +
+            '<span>🤖</span>' +
+            '<span>Unattached Subagents (' + visibleUnattached.length + ')</span>' +
+            '<span class="muted-color font-mono">· ' + formatTok(uTok) + ' tok · ' + uStorage + ' MB</span>' +
+          '</div>' +
+          '<span class="text-[10px] muted-color">' + (unattachedExpanded ? 'Hide' : 'Show') + '</span>';
+
+        const unListDiv = document.createElement('div');
+        unListDiv.className = 'space-y-1.5 ml-3 mt-1 border-l-2 border-amber-500/30 pl-2.5 ' + (unattachedExpanded ? '' : 'hidden');
+
+        visibleUnattached.forEach(ch => {
+          const uRow = createConvRow(ch, true);
+          unListDiv.appendChild(uRow);
+        });
+
+        unToggle.onclick = (e) => {
+          e.stopPropagation();
+          unattachedExpanded = !unattachedExpanded;
+          unListDiv.classList.toggle('hidden', !unattachedExpanded);
+          const arrow = unToggle.querySelector('.unattached-arrow');
+          if (arrow) arrow.textContent = unattachedExpanded ? '▾' : '▸';
+          const hint = unToggle.querySelector('span:last-child');
+          if (hint) hint.textContent = unattachedExpanded ? 'Hide' : 'Show';
+        };
+
+        unWrap.appendChild(unToggle);
+        unWrap.appendChild(unListDiv);
+        container.appendChild(unWrap);
+      }
     }
 
     function filterList() {
-      const orphans = CONVERSATIONS.filter(c => c.isOrphan);
-      const banner = document.getElementById('orphanBanner');
-      if (banner) {
-        if (orphans.length > 0) {
-          banner.classList.remove('hidden');
-          document.getElementById('orphanCount').textContent = orphans.length;
-          const totDisk = orphans.reduce((sum, o) => sum + (parseFloat(o.storageMB) || 0), 0).toFixed(1);
-          document.getElementById('orphanDisk').textContent = totDisk + ' MB';
+      const wsList = getWorkspaceFilteredConversations();
+      const heading = document.getElementById('listHeading');
+      const subHeading = document.getElementById('listSubHeading');
+
+      const humanCount = wsList.filter(c => !c.isSubagent).length;
+      const subCount = wsList.filter(c => c.isSubagent).length;
+
+      if (heading) {
+        if (currentSubagentFilter === 'chats') {
+          heading.textContent = 'Conversation History (' + humanCount + ' chats)';
+        } else if (currentSubagentFilter === 'subagents') {
+          heading.textContent = 'Subagent Sessions (' + subCount + ' subagents)';
         } else {
-          banner.classList.add('hidden');
+          heading.textContent = 'Conversation History (' + wsList.length + ' sessions)';
         }
       }
+      if (subHeading) {
+        const wsLabel = currentWorkspaceFilter === 'all'
+          ? 'All Workspaces'
+          : (currentWorkspaceFilter.startsWith('ws:') ? currentWorkspaceFilter.slice(3) : (currentWorkspaceName || 'Current Workspace'));
+        subHeading.textContent = 'Showing: ' + wsLabel + ' · Click any session to view its telemetry';
+      }
 
-      const q = (document.getElementById('searchInput').value || '').toLowerCase();
-      const filtered = CONVERSATIONS.filter(c => 
-        (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q)
-      );
-      renderList(filtered);
+      const q = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+      renderList(wsList, q);
     }
 
     function formatTok(n) {
@@ -635,18 +1121,131 @@ function getDashboardHtml(conversations, activeId) {
       }
     }
 
-    function purgeOrphans() {
-      const orphans = CONVERSATIONS.filter(c => c.isOrphan);
-      if (orphans.length === 0) return;
-      vscode.postMessage({ command: 'purgeOrphaned' });
-    }
-
     function renderDetail() {
       const conv = CONVERSATIONS.find(c => c.id === selectedId) || CONVERSATIONS[0];
       if (!conv || !conv.stats) return;
 
       const s = conv.stats;
-      document.getElementById('chatTitle').textContent = conv.title || 'Untitled Conversation';
+      const isSub = Boolean(conv.isSubagent);
+      const subBadge = document.getElementById('subagentBadge');
+      const agentVal = document.getElementById('chatAgentVal');
+      const breadcrumb = document.getElementById('subagentBreadcrumb');
+
+      if (isSub) {
+        if (subBadge) {
+          subBadge.classList.remove('hidden');
+          if (agentVal) agentVal.textContent = conv.agentName || 'subagent';
+        }
+        const hasTitle = conv.title && conv.title !== '<original_task>' && conv.title.trim() !== conv.agentName;
+        let headTitle = hasTitle ? conv.title.trim() : (conv.agentName || 'Subagent');
+        if (headTitle.length > 60) {
+          headTitle = headTitle.slice(0, 58).trim() + '…';
+        }
+        document.getElementById('chatTitle').textContent = headTitle;
+        document.getElementById('chatTitle').title = conv.title || '';
+
+        if (breadcrumb) {
+          breadcrumb.classList.remove('hidden');
+          breadcrumb.innerHTML = '';
+
+          const parentId = conv.parentConversationId;
+          const parentConv = parentId ? CONVERSATIONS.find(c => c.id === parentId) : null;
+
+          const prefix = document.createElement('span');
+          prefix.className = 'muted-color';
+          prefix.textContent = 'Subagent of: ';
+          breadcrumb.appendChild(prefix);
+
+          if (parentConv) {
+            const link = document.createElement('a');
+            link.className = 'text-blue-400 hover:underline cursor-pointer font-medium';
+            link.textContent = parentConv.title || 'Parent Chat';
+            link.onclick = () => selectConv(parentConv.id);
+            breadcrumb.appendChild(link);
+          } else if (conv.parentTitle) {
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'text-zinc-300 font-medium';
+            nameSpan.textContent = conv.parentTitle;
+            breadcrumb.appendChild(nameSpan);
+
+            const note = document.createElement('span');
+            note.className = 'text-[10px] muted-color';
+            note.textContent = ' (session data no longer on disk)';
+            breadcrumb.appendChild(note);
+          } else {
+            const missing = document.createElement('span');
+            missing.className = 'muted-color italic';
+            missing.textContent = 'parent chat no longer available';
+            breadcrumb.appendChild(missing);
+          }
+        }
+      } else {
+        if (subBadge) subBadge.classList.add('hidden');
+        if (breadcrumb) breadcrumb.classList.add('hidden');
+        document.getElementById('chatTitle').textContent = conv.title || 'Untitled Conversation';
+        document.getElementById('chatTitle').title = '';
+      }
+
+      // 🤖 Subagents & Background Workers Card
+      const children = CONVERSATIONS.filter(c => c.parentConversationId === conv.id);
+      const subCard = document.getElementById('subagentsCard');
+      const subList = document.getElementById('subagentsList');
+      const subCountBadge = document.getElementById('subagentsCountBadge');
+      const subRolledUp = document.getElementById('subagentsRolledUpTotal');
+
+      if (children.length > 0) {
+        if (subCard) subCard.classList.remove('hidden');
+        if (subCountBadge) subCountBadge.textContent = children.length + (children.length === 1 ? ' subagent' : ' subagents');
+
+        let childTok = 0;
+        let childStorage = 0;
+        if (subList) {
+          subList.innerHTML = '';
+          children.forEach(ch => {
+            const cTok = ch.stats ? ch.stats.grandTotal : 0;
+            const cStorage = parseFloat(ch.storageMB) || 0;
+            childTok += cTok;
+            childStorage += cStorage;
+
+            const row = document.createElement('div');
+            row.className = 'p-2 inner-bg border border-color rounded-lg flex items-center justify-between gap-2 hover:border-blue-500/40 cursor-pointer transition-colors';
+            row.onclick = () => selectConv(ch.id);
+
+            const left = document.createElement('div');
+            left.className = 'flex items-center gap-2 min-w-0';
+            const hasTask = ch.title && ch.title !== '<original_task>' && ch.title.trim() !== ch.agentName;
+            let displayTask = hasTask ? ch.title.trim() : (ch.agentName || ch.id.slice(0, 8));
+            if (displayTask.length > 36) displayTask = displayTask.slice(0, 34).trim() + '…';
+            left.innerHTML = 
+              '<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">🤖 ' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
+              '<span class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)] font-medium truncate" title="' + escapeHtml(ch.title || '') + '">' + escapeHtml(displayTask) + '</span>' +
+              '<span class="text-[10px] muted-color font-mono shrink-0">(' + escapeHtml(ch.id.slice(0, 8)) + ')</span>';
+
+            const right = document.createElement('div');
+            right.className = 'flex items-center gap-2.5 shrink-0 text-xs font-mono';
+            right.innerHTML = 
+              '<span class="text-zinc-400 text-[11px]">' + (ch.storageMB || '0.0') + ' MB</span>' +
+              '<span class="text-emerald-400 font-semibold">' + formatTok(cTok) + ' tok</span>' +
+              '<span class="text-[10px] muted-color">(' + (ch.stats ? ch.stats.calls : 0) + ' calls)</span>' +
+              '<span class="text-blue-400 text-[11px]">Inspect →</span>';
+
+            row.appendChild(left);
+            row.appendChild(right);
+            subList.appendChild(row);
+          });
+        }
+
+        const parentTok = s.grandTotal || 0;
+        const rolledTok = parentTok + childTok;
+        if (subRolledUp) {
+          subRolledUp.innerHTML = 
+            '<span class="muted-color">Parent (' + formatTok(parentTok) + ') + Subagents (' + formatTok(childTok) + ') = </span>' +
+            '<span class="text-emerald-400 font-bold">' + formatTok(rolledTok) + ' total</span>';
+        }
+      } else {
+        if (subCard) subCard.classList.add('hidden');
+      }
+
       document.getElementById('chatBadge').textContent = s.modelName || 'gemini-3.8-flash';
       document.getElementById('chatMeta').textContent = 'ID: ' + conv.id + ' · Active: ' + (conv.lastModified ? new Date(conv.lastModified).toLocaleDateString() : 'Recent');
       document.getElementById('grandTotalText').textContent = s.grandTotal.toLocaleString();
@@ -657,30 +1256,28 @@ function getDashboardHtml(conversations, activeId) {
         document.getElementById('activePill').classList.add('hidden');
       }
 
-      // Ghost Pill and Disk Badges
-      const ghostEl = document.getElementById('ghostPill');
-      if (ghostEl) {
-        if (conv.isOrphan) ghostEl.classList.remove('hidden');
-        else ghostEl.classList.add('hidden');
+      const wsBadge = document.getElementById('workspaceBadge');
+      const wsVal = document.getElementById('chatWorkspaceVal');
+      if (wsBadge && wsVal) {
+        if (conv.workspaceName) {
+          wsBadge.classList.remove('hidden');
+          wsVal.textContent = conv.workspaceName;
+        } else {
+          wsBadge.classList.add('hidden');
+        }
       }
       const diskEl = document.getElementById('chatDiskVal');
       if (diskEl) diskEl.textContent = (conv.storageMB || '0.0') + ' MB';
 
-      // Compact Cost Badges
-      const costEl = document.getElementById('costVal');
-      if (costEl) costEl.textContent = '$' + (s.estimatedCost || '0.00');
-      const savedEl = document.getElementById('costSavedVal');
-      if (savedEl) savedEl.textContent = '$' + (s.costSaved || '0.00');
-
       // 4 Top KPI Cards
       const tot = s.grandTotal || 1;
-      const lastContext = s.currentContext || (s.contextTimeline && s.contextTimeline.length > 0 ? s.contextTimeline[s.contextTimeline.length - 1].input : s.peakContext);
-      const contextLimit = 255000;
+      const contextLimit = s.contextLimit || 256000;
+      const lastContext = (s.contextTokens != null ? s.contextTokens : s.currentContext) || (s.contextTimeline && s.contextTimeline.length > 0 ? s.contextTimeline[s.contextTimeline.length - 1].input : s.peakContext);
       const contextPct = Math.min(100, Math.round((lastContext / contextLimit) * 100));
       const headroom = Math.max(0, contextLimit - lastContext);
 
       // Card 1: Context Window
-      document.getElementById('kpiContext').textContent = formatTok(lastContext) + ' / 255k';
+      document.getElementById('kpiContext').textContent = formatTok(lastContext) + ' / ' + formatTok(contextLimit);
       document.getElementById('kpiContextSub').textContent = contextPct + '% Fill (' + formatTok(headroom) + ' left)';
 
       // Card 2: Cache Read
@@ -695,7 +1292,7 @@ function getDashboardHtml(conversations, activeId) {
 
       // Card 4: Model Output
       document.getElementById('kpiOutput').textContent = formatTok(s.totalOutput);
-      document.getElementById('kpiOutputSub').textContent = 'Avg ' + (s.avgOutput || 0).toLocaleString() + ' tok / call';
+      document.getElementById('kpiOutputSub').textContent = 'Avg ' + (s.avgOutput || 0).toLocaleString() + ' tok / call · ' + (s.thinkingRate || '0.0') + '% think';
 
       // Token Composition 3-part Progress Bar & Legend
       const pctRead = ((s.totalCached / tot) * 100).toFixed(1);
@@ -720,7 +1317,7 @@ function getDashboardHtml(conversations, activeId) {
       const lt = s.lastTurn;
       if (lt) {
         document.getElementById('metaLastTurnNum').textContent = 'Turn #' + lt.turn;
-        document.getElementById('metaLastContext').textContent = formatTok(lt.totalInput) + ' tok';
+        document.getElementById('metaLastContext').textContent = formatTok(lt.context != null ? lt.context : lt.totalInput) + ' tok';
         document.getElementById('metaLastFresh').textContent = '+' + formatTok(lt.fresh) + ' fresh';
         document.getElementById('metaLastOutput').textContent = lt.output.toLocaleString() + ' tok (' + lt.thinking.toLocaleString() + ' thk)';
         if (lt.isCompacted) {
@@ -747,9 +1344,14 @@ function getDashboardHtml(conversations, activeId) {
       document.getElementById('metaCacheCalls').textContent = s.cacheHits + ' / ' + s.calls + ' Hits';
       document.getElementById('metaCacheMisses').textContent = s.cacheMisses + ' misses';
       document.getElementById('metaCompactions').textContent = (s.compactionsCount || 0) + ' events';
+      const limitLabel = formatTok(contextLimit);
+      const ceilEl = document.getElementById('metaCeilingLimit');
+      if (ceilEl) ceilEl.textContent = limitLabel + ' limit';
+      const chartCeilLeg = document.getElementById('chartCeilingLegend');
+      if (chartCeilLeg) chartCeilLeg.textContent = limitLabel + ' Limit';
 
       // Card 4: Session Peaks
-      const peakPct = Math.min(100, Math.round(((s.peakContext || 0) / 255000) * 100));
+      const peakPct = Math.min(100, Math.round(((s.peakContext || 0) / contextLimit) * 100));
       document.getElementById('metaPeakContext').textContent = formatTok(s.peakContext) + ' (' + peakPct + '%)';
       document.getElementById('metaPeakOutput').textContent = (s.peakOutput || 0).toLocaleString() + ' tok';
       document.getElementById('metaPeakThinking').textContent = (s.peakThinking || 0).toLocaleString() + ' tok';
@@ -780,8 +1382,9 @@ function getDashboardHtml(conversations, activeId) {
       const chartW = w - padLeft - padRight;
       const chartH = h - padTop - padBottom;
 
-      // Compaction ceiling calibrated to 255,000 tokens
-      const ceilingTokens = 255000;
+      // Compaction ceiling calibrated to 256,000 tokens (or conversation limit)
+      const conv = CONVERSATIONS.find(c => c.id === selectedId);
+      const ceilingTokens = (conv && conv.stats && conv.stats.contextLimit) || 256000;
       const maxDataTokens = Math.max(...timeline.map(t => Math.max(t.input || 0, t.cached || 0))) || 1;
       const maxVal = Math.max(ceilingTokens, maxDataTokens * 1.05);
 
@@ -798,7 +1401,7 @@ function getDashboardHtml(conversations, activeId) {
         '</linearGradient>';
       svg.appendChild(defs);
 
-      // 255k Limit Dashed Guideline
+      // Compaction Limit Dashed Guideline
       const ceilingY = padTop + chartH - (ceilingTokens / maxVal) * chartH;
       if (ceilingY >= padTop && ceilingY <= padTop + chartH) {
         const ceilingLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
@@ -819,7 +1422,7 @@ function getDashboardHtml(conversations, activeId) {
         ceilingLabel.setAttribute('font-size', '9');
         ceilingLabel.setAttribute('font-weight', '600');
         ceilingLabel.setAttribute('text-anchor', 'end');
-        ceilingLabel.textContent = '255k Compaction Limit';
+        ceilingLabel.textContent = formatTok(ceilingTokens) + ' Compaction Limit';
         svg.appendChild(ceilingLabel);
       }
 
@@ -828,9 +1431,10 @@ function getDashboardHtml(conversations, activeId) {
         const x = timeline.length === 1 
           ? padLeft + chartW / 2 
           : padLeft + (i / (timeline.length - 1)) * chartW;
-        const yContext = padTop + chartH - (pt.input / maxVal) * chartH;
-        const yCached = padTop + chartH - ((pt.cached || 0) / maxVal) * chartH;
-        return { x, yContext, yCached, pt };
+        const visualCached = Math.min(pt.cached || 0, pt.input || 0);
+        const yContext = padTop + chartH - ((pt.input || 0) / maxVal) * chartH;
+        const yCached = padTop + chartH - (visualCached / maxVal) * chartH;
+        return { x, yContext, yCached, visualCached, pt };
       });
 
       if (points.length > 1) {
@@ -969,8 +1573,9 @@ function getDashboardHtml(conversations, activeId) {
         }
 
         const pctCeil = Math.round((pt.input / ceilingTokens) * 100);
-        document.getElementById('ttContext').textContent = pt.input.toLocaleString() + ' tok (' + pctCeil + '% of 255k)';
-        document.getElementById('ttCached').textContent = (pt.cached || 0).toLocaleString() + ' tok (' + (pt.input > 0 ? ((pt.cached / pt.input) * 100).toFixed(0) : 0) + '%)';
+        document.getElementById('ttContext').textContent = pt.input.toLocaleString() + ' tok (' + pctCeil + '% of ' + formatTok(ceilingTokens) + ')';
+        const cachePct = pt.input > 0 ? Math.min(100, Math.round(((pt.cached || 0) / pt.input) * 100)) : 0;
+        document.getElementById('ttCached').textContent = (pt.cached || 0).toLocaleString() + ' tok (' + cachePct + '%)';
         document.getElementById('ttFresh').textContent = '+' + (pt.fresh || 0).toLocaleString() + ' tok';
         document.getElementById('ttOutput').textContent = (pt.output || 0).toLocaleString() + ' tok (' + (pt.thinking || 0).toLocaleString() + ' thk)';
 
@@ -998,8 +1603,51 @@ function getDashboardHtml(conversations, activeId) {
       svg.appendChild(overlay);
     }
 
+    // The webview CSP is nonce-based, and a nonce does NOT authorise inline event-handler
+    // attributes (an onclick attribute would be blocked). Every handler is attached here.
+    function bindEvents() {
+      const handlers = [
+        ['tabDetailBtn', () => switchTab('detail')],
+        ['tabListBtn', () => switchTab('list')],
+        ['chipAllBtn', () => setSubagentFilter('all')],
+        ['chipChatsBtn', () => setSubagentFilter('chats')],
+        ['chipSubagentsBtn', () => setSubagentFilter('subagents')],
+        ['chatSelect', null],
+        ['searchInput', null],
+        ['deleteChatBtn', () => promptDeleteCurrent()],
+        ['delModalCancelBtn', () => closeDeleteModal()],
+        ['delModalConfirmBtn', () => confirmDeleteExec()]
+      ];
+      for (const [id, handler] of handlers) {
+        if (!handler) continue;
+        const el = document.getElementById(id);
+        if (el) el.onclick = handler;
+      }
+      const select = document.getElementById('chatSelect');
+      if (select) select.onchange = e => selectConv(e.target.value);
+      const wsSelect = document.getElementById('workspaceSelect');
+      if (wsSelect) {
+        wsSelect.onchange = e => {
+          currentWorkspaceFilter = e.target.value;
+          const list = getFilteredConversations();
+          if (list.length > 0 && !list.some(c => c.id === selectedId)) {
+            selectedId = list[0].id;
+          }
+          populateDropdown();
+          filterList();
+          updateGlobalHeaders();
+          renderDetail();
+        };
+      }
+      const search = document.getElementById('searchInput');
+      if (search) search.oninput = () => filterList();
+    }
+
+    bindEvents();
+    populateWorkspaceDropdown();
     populateDropdown();
     filterList();
+    updateGlobalHeaders();
     renderDetail();
     window.onresize = () => {
       const conv = CONVERSATIONS.find(c => c.id === selectedId);

@@ -1,0 +1,11 @@
+.git/**
+.github/**
+.vscode/**
+node_modules/**
+scripts/**
+link-extensions.js
+unlink-extensions.js
+media/tailwind-input.css
+*.vsix
+.DS_Store
+DEV_CHANGELOG.md
