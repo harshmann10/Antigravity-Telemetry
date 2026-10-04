@@ -1,6 +1,15 @@
-# Antigravity Telemetry (VS Code Extension)
+# Antigravity Telemetry - Context & Token Monitor (VS Code Extension)
+
+[![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/HarshMann.antigravity-telemetry?color=blue&style=flat-square&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
+[![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/HarshMann.antigravity-telemetry?color=emerald&style=flat-square&label=installs)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
+[![Visual Studio Marketplace Rating](https://img.shields.io/visual-studio-marketplace/r/HarshMann.antigravity-telemetry?color=yellow&style=flat-square&label=rating)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
+[![GitHub Release](https://img.shields.io/github/v/release/harshmann10/Antigravity-Telemetry?color=3b82f6&style=flat-square)](https://github.com/harshmann10/Antigravity-Telemetry/releases/latest)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen?style=flat-square)](https://github.com/harshmann10/Antigravity-Telemetry/blob/main/package.json)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
 
 A lightweight, zero-token, real-time LLM telemetry monitor, visual observability dashboard, and storage management extension for Google Antigravity inside VS Code.
+
+![Antigravity Telemetry Visual Dashboard](./media/dashboard-preview.png)
 
 ---
 
@@ -140,77 +149,64 @@ A full scan used to re-query every conversation's `gen_metadata` table and re-wa
 
 ---
 
-## Development & Installation
+## 📥 Installation
 
-### Verifying a change
+### Option 1: From VS Code Marketplace (Recommended)
 
-A self-contained check suite runs without launching VS Code (no test framework, no dependencies):
+Install directly from the official **[Visual Studio Code Marketplace](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)**:
+
+1. Open VS Code and open the Extensions sidebar (`Ctrl+Shift+X` / `Cmd+Shift+X`).
+2. Search for **`Antigravity Telemetry`** (Publisher: **HarshMann**).
+3. Click **Install**.
+
+*Or install instantly from your terminal:*
+```bash
+code --install-extension HarshMann.antigravity-telemetry
+```
+
+---
+
+### Option 2: Standalone VSIX Package
+
+1. Download the latest `.vsix` from [GitHub Releases](https://github.com/harshmann10/Antigravity-Telemetry/releases/latest).
+2. Open VS Code $\rightarrow$ Extensions (`Ctrl+Shift+X`) $\rightarrow$ click **`...`** (Views and More Actions) at the top-right $\rightarrow$ **Install from VSIX...**.
+3. Select the downloaded `antigravity-telemetry-1.0.0.vsix`.
+
+*Or install via terminal:*
+```bash
+code --install-extension antigravity-telemetry-1.0.0.vsix
+```
+
+> **Prerequisites:**
+> - Must have Google Antigravity installed (telemetry is read directly from your local `~/.gemini/antigravity` folder).
+> - Must have the `sqlite3` CLI available (built-in on macOS/Linux; auto-detected on Windows or configurable via `antigravity.sqlitePath`).
+
+---
+
+## 🛠️ Development & Contributing
+
+### Running Verification Tests
+
+A dependency-free test suite verifies protobuf decoding, math calculations, incremental cache parity, and changelog parsing:
 
 ```bash
 node scripts/self-check.js
 ```
 
-**119 assertions across 13 sections**, covering the protobuf decode and usage math against a synthetic
-fixture with known values, per-row context fallback, incremental-vs-full parity (including the deleted-row
-guard and non-sampled turns), real-installation parity, conversation-id validation, a Recycle Bin round
-trip on temporary files, workspace parsing and scoping, subagent organization and active-chat selection,
-dashboard stability across telemetry updates, `sqlite3` resolution, and chart layer integrity. It also
-times a cold vs cached scan of your real installation.
+Runs **128 assertions across 13 sections** in < 2 seconds without external test frameworks.
 
-### Rebuilding the dashboard stylesheet
+### Rebuilding Dashboard Stylesheet
 
-`media/dashboard.css` is generated and **committed** so the extension keeps zero runtime dependencies. If you
-change any class name in `dashboardHtml.js`, regenerate it:
+`media/dashboard.css` is pre-compiled and committed to ensure zero runtime dependencies. If you modify Tailwind classes in `dashboardHtml.js`, re-build it:
 
 ```bash
 npm run build:css
 ```
 
-(`npx tailwindcss@3` is only used at build time; nothing is installed into the extension.)
+### Packaging .vsix
 
-> ⚠️ The dashboard webview uses a nonce-based CSP, which does **not** authorise inline event-handler
-> attributes. Add listeners in `bindEvents()` inside `dashboardHtml.js` instead of writing `onclick="…"` —
-> otherwise the control silently does nothing.
-
-### Live Directory Junctions (Local Setup)
-
-The extension is linked to VS Code and VS Code Insiders via Windows Directory Junctions:
-
-```cmd
-cmd /c mklink /J "%USERPROFILE%\.vscode\extensions\antigravity-telemetry" "G:\web dev\antigravity-telemetry"
-cmd /c mklink /J "G:\vs code insider\data\extensions\antigravity-telemetry" "G:\web dev\antigravity-telemetry"
-```
-
-Or run the included setup helper:
-
-```bash
-node link-extensions.js
-```
-
-### Applying Changes
-
-Press `Ctrl + Shift + P` $\rightarrow$ **`Developer: Reload Window`** in VS Code to immediately test edits.
-
-### 📦 Packaging & Sharing (.vsix)
-
-To package the extension into a standalone `.vsix` installer for sharing with other users or testing:
+Generate a fresh, production-ready `.vsix` package:
 
 ```bash
 npm run package
 ```
-
-This generates a lightweight, self-contained **`antigravity-telemetry-1.0.0.vsix`** (under 60 KB).
-
-#### How other users install the .vsix:
-1. Open VS Code and go to the **Extensions** view (`Ctrl+Shift+X` / `Cmd+Shift+X`).
-2. Click the **`...`** (Views and More Actions) menu at the top-right of the Extensions sidebar.
-3. Select **`Install from VSIX...`** and choose `antigravity-telemetry-1.0.0.vsix`.
-4. *Or via Terminal:*
-   ```bash
-   code --install-extension antigravity-telemetry-1.0.0.vsix
-   ```
-
-> **Prerequisites for other users:**
-> - Must have Google Antigravity installed (reads sessions from `~/.gemini/antigravity`).
-> - Must have the `sqlite3` CLI available (built-in on macOS/Linux; auto-detected on Windows or configurable via `antigravity.sqlitePath`).
-

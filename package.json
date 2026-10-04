@@ -1,25 +1,38 @@
 {
   "name": "antigravity-telemetry",
-  "displayName": "Antigravity Telemetry",
+  "displayName": "Antigravity Telemetry - Context & Token Monitor",
   "description": "Live context window usage, prompt cache hit rate, and token intelligence for Antigravity",
-  "version": "1.0.0",
-  "publisher": "local",
+  "version": "1.0.1",
+  "publisher": "HarshMann",
+  "license": "MIT",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
+    "Machine Learning",
+    "Programming Languages",
     "Other"
+  ],
+  "keywords": [
+    "antigravity",
+    "telemetry",
+    "context-window",
+    "prompt-cache",
+    "tokens",
+    "token-counter",
+    "gemini",
+    "llm",
+    "subagent"
   ],
   "activationEvents": [
     "onStartupFinished"
   ],
   "main": "./extension.js",
   "scripts": {
-    "link": "node link-extensions.js",
-    "unlink": "node unlink-extensions.js",
     "build:css": "npx --yes tailwindcss@3.4.17 -i media/tailwind-input.css -o media/dashboard.css --minify --content \"./dashboardHtml.js\"",
     "self-check": "node scripts/self-check.js",
-    "package": "npx --yes @vscode/vsce package --allow-missing-repository --skip-license"
+    "package": "npx --yes @vscode/vsce package"
   },
   "contributes": {
     "configuration": {
@@ -72,5 +85,9 @@
         "title": "Antigravity: Show Logs"
       }
     ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harshmann10/Antigravity-Telemetry.git"
   }
 }

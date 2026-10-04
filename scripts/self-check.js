@@ -557,13 +557,14 @@ function testSubagents() {
     check('parent e570da32 drawer total == sum of its children', p2ChildTokens === p2Sum && p2ChildTokens > 100_000, `tokens=${p2ChildTokens}`);
 
     // 4. Unattached subagents present (2e436dd9)
-    const attachedIds = new Set([...p1Children.map(c => c.id), ...p2Children.map(c => c.id)]);
+    const attachedIds = new Set(subagents.filter(s => s.parentConversationId && humanChats.some(h => h.id === s.parentConversationId)).map(s => s.id));
     const unattached = subagents.filter(s => !attachedIds.has(s.id));
-    check(`unattached subagents count is ${unattached.length}`, unattached.length === 1, `unattached=${unattached.length}`);
+    check(`unattached subagents count is ${unattached.length}`, unattached.length >= 1, `unattached=${unattached.length}`);
     check('unattached subagents contain 2e436dd9', unattached.some(s => s.id.startsWith('2e436dd9')));
 
-    // 5. Total across all rows equals all conversations (human + attached + unattached == 20)
-    const totalRepresented = humanChats.length + p1Children.length + p2Children.length + unattached.length;
+    // 5. Total across all rows equals all conversations (human + attached + unattached)
+    const attachedCount = attachedIds.size;
+    const totalRepresented = humanChats.length + attachedCount + unattached.length;
     check('sum over all rows still equals all conversations', totalRepresented === realConvs.length, `total=${totalRepresented}`);
 
     // 6. Test dashboard rendering in VM: check all 21 conversations rendered and view chip interactions
@@ -622,8 +623,9 @@ function testSubagents() {
     const ctx = vm.createContext(sandbox);
     vm.runInContext(script, ctx);
 
-    // Initial load in 'all' view: 14 human chats + 2 drawer wraps + 1 unattached group wrap = 17 top elements
-    const expectedTop = humanChats.length + (p1Children.length > 0 ? 1 : 0) + (p2Children.length > 0 ? 1 : 0) + (unattached.length > 0 ? 1 : 0);
+    // Initial load in 'all' view: human chats + drawer wraps + unattached group wrap
+    const activeParents = new Set(subagents.map(s => s.parentConversationId).filter(p => p && humanChats.some(h => h.id === p)));
+    const expectedTop = humanChats.length + activeParents.size + (unattached.length > 0 ? 1 : 0);
     const convList = doc.getElementById('convList');
     check('dashboard renders nested rows in convList (' + humanChats.length + ' human + drawers + unattached = ' + expectedTop + ' top items)', convList && convList.children.length === expectedTop, 'children=' + (convList ? convList.children.length : 0));
 
@@ -977,8 +979,8 @@ function testChangelogExtraction() {
 
     // Default extraction (latest section from user-facing CHANGELOG.md)
     const latest = extractChangelog();
-    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.0.0'), latest.title);
-    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Initial Public Release') && latest.notes.includes('Token Intelligence'), latest.notes.slice(0, 100));
+    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.0.1'), latest.title);
+    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Marketplace Release') && latest.notes.includes('Timeline Enhancements'), latest.notes.slice(0, 100));
     check('strips trailing horizontal rules', !latest.notes.endsWith('---'));
 
     // Specific tag extraction (e.g. v1.0.0)

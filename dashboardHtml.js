@@ -1427,10 +1427,17 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
 
       // Compute Point Coordinates
+      const minTurn = (timeline[0] && typeof timeline[0].turn === 'number') ? timeline[0].turn : 1;
+      const maxTurn = (timeline[timeline.length - 1] && typeof timeline[timeline.length - 1].turn === 'number')
+        ? timeline[timeline.length - 1].turn
+        : minTurn;
+      const turnSpan = Math.max(1, maxTurn - minTurn);
+
       const points = timeline.map((pt, i) => {
-        const x = timeline.length === 1 
-          ? padLeft + chartW / 2 
-          : padLeft + (i / (timeline.length - 1)) * chartW;
+        const turnVal = typeof pt.turn === 'number' ? pt.turn : (i + 1);
+        const x = (timeline.length === 1 || turnSpan === 0)
+          ? padLeft + chartW / 2
+          : padLeft + ((turnVal - minTurn) / turnSpan) * chartW;
         const visualCached = Math.min(pt.cached || 0, pt.input || 0);
         const yContext = padTop + chartH - ((pt.input || 0) / maxVal) * chartH;
         const yCached = padTop + chartH - (visualCached / maxVal) * chartH;

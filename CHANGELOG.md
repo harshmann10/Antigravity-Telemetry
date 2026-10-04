@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-10-04
+
+### 🚀 Visual Studio Code Marketplace Release & Timeline Enhancements
+
+#### 🎨 Extension Branding & Marketplace Assets
+- **Official Extension Icon**: Added high-resolution custom icon (`media/icon.png`) and banner dashboard preview.
+- **MIT License**: Formally included MIT license declaration and file for open distribution.
+- **Direct Marketplace Installation**: Published officially under `HarshMann.antigravity-telemetry` on the Visual Studio Code Marketplace.
+
+#### 📈 Proportional Chart Scaling & 1:1 Resolution
+- **Proportional X-Axis Timeline**: Scaled the SVG context timeline strictly by actual turn progress (`pt.turn`), eliminating artificial horizontal width distortion where early compactions appeared 3× wider than subsequent compactions.
+- **1:1 Turn Fidelity**: Removed artificial decimation stride so every turn is preserved 1:1 (~70 KB per chat), improving tooltip hover precision.
+
+#### 🧹 Maintenance & Cleanup
+- Removed legacy local directory junction scripts in favor of direct Marketplace and VSIX installation.
+- Updated documentation with official Marketplace badges and CLI commands.
+
+---
+
 ## [1.0.0] - 2026-09-27
 
 ### 🎉 Initial Public Release

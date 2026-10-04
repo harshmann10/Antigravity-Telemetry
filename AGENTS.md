@@ -32,8 +32,6 @@ G:\web dev\antigravity-telemetry\
 ├── scripts/
 │   ├── self-check.js        # Dependency-free verification suite (run after changing telemetryReader.js)
 │   └── extract-changelog.js # Extracts changelog release notes for GitHub releases
-├── link-extensions.js    # Script to symlink extension into VS Code & VS Code Insiders
-├── unlink-extensions.js  # Script to remove symlinks
 ├── AGENTS.md             # AI development instructions, invariants & telemetry specs (this file)
 ├── DEV_CHANGELOG.md      # Detailed developer & engineering changelog by review phase
 ├── CHANGELOG.md          # User-facing release notes (parsed by GitHub Action release workflow)
@@ -265,13 +263,12 @@ Context fill % = `min(100, round(Current Context / Ceiling × 100))`.
 
 ---
 
-## 6. Development, Symlinks & Verification
+## 6. Development, Packaging & Verification
 
-### Live Directory Junctions:
+### Marketplace Distribution:
 
-VS Code and VS Code Insiders both link to this folder via Windows directory junctions
-(`%USERPROFILE%\.vscode\extensions\antigravity-telemetry` and `G:\vs code insider\data\extensions\antigravity-telemetry`).
-Run `node link-extensions.js` to create or repair them.
+The extension is published on the VS Code Marketplace:
+[HarshMann.antigravity-telemetry](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
 
 ### Reloading After Edits:
 
@@ -297,7 +294,7 @@ npm run package              # Packages the extension as a standalone .vsix via 
 ### Packaging & Distribution (.vsix):
 
 The extension is packaged as a standalone installer using `@vscode/vsce`:
-- Configuration: `.vscodeignore` excludes development scripts (`scripts/`, `link-extensions.js`, etc.) and dev inputs (`tailwind-input.css`).
+- Configuration: `.vscodeignore` excludes development scripts (`scripts/`, dev inputs, etc.) and dev inputs (`tailwind-input.css`).
 - Build command: `npm run package` generates `antigravity-telemetry-1.0.0.vsix` (~58 KB, 10 runtime files).
 - Zero runtime dependencies: all telemetry parsing runs on pure Node built-ins and precompiled CSS.
 
@@ -365,8 +362,35 @@ one action, so recoverability matters more than the few seconds saved.
 
 ---
 
-## 10. Git & Workflow Rules
+## 10. Git & Release Workflow Rules
 
 > [!IMPORTANT]
-> **NO COMMITS WITHOUT EXPLICIT APPROVAL**:
-> AI agents working on this codebase must **NEVER** run `git commit` or create git commits autonomously. Always verify changes with the user and wait for explicit user instruction or approval before committing any files.
+> **STRICT AGENT RESTRAINT ON GIT & RELEASES**:
+> AI agents working on this codebase must **NEVER** run `git commit`, `git tag`, `git push`, or trigger a GitHub release autonomously on their own initiative.
+> - An agent may only execute git or release commands **WHEN THE USER EXPLICITLY ASKS TO DO IT** in the conversation.
+> - Every commit must include a clear, descriptive commit message (`git commit -m "..."`). Never commit without a commit message.
+> - Always present changes and let the user decide when to commit and release.
+
+### Release Workflows:
+
+Releases are built and published automatically via `.github/workflows/release.yml`. When the user asks to release, use one of the following methods:
+
+1. **Tag-Triggered Release (Recommended):**
+   ```bash
+   git commit -m "feat: descriptive commit message for changes"
+   git tag v1.0.0
+   git push origin main --tags
+   ```
+   Pushing the `v*` tag triggers the GitHub Action, which extracts notes from `CHANGELOG.md`, packages the `.vsix`, and publishes the release.
+
+2. **Commit Push + GitHub Actions Dispatch:**
+   ```bash
+   git commit -m "feat: descriptive commit message"
+   git push origin main
+   ```
+   Then trigger the workflow manually from GitHub (Actions → **Release** → **Run workflow**). The workflow automatically derives `v<version>` from `package.json` and creates the release on that commit.
+
+### Note on GitHub Actions Tests:
+- Pre-flight test checks (`npm run self-check`) have been **intentionally removed from `.github/workflows/release.yml`** by the user to keep the CI release workflow fast and unblocked.
+- **Do NOT re-add test checks or self-checks to `.github/workflows/release.yml`** unless explicitly requested by the user.
+- Local verification (`npm run self-check`) remains available for manual testing on demand.

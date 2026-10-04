@@ -40,6 +40,7 @@ For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 - Webview view-state stability: background polling no longer clobbers the user's workspace scope or selected chat, and `chatSelect` retains a selection outside the current filter.
 - Subagent UI polish: descriptions truncated cleanly to 36 chars with hover tooltips, badges adjusted to prevent layout clipping, and table rows de-cluttered.
 - Responsive single-scroll layout: pinned header (`shrink-0`) and responsive list fill (`flex-1 min-h-0`), removing dual-scrollbars on Tab 2.
+- 1:1 timeline fidelity & proportional chart scaling: removed artificial decimation stride so every turn is preserved 1:1 (~70 KB per chat); scaled SVG chart X-axis strictly by turn progress (`pt.turn`), eliminating visual horizontal distortion between early and late compaction cycles.
 
 ---
 

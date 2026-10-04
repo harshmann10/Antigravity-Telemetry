@@ -482,30 +482,22 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     if (effectiveContext > peakContextSeen) peakContextSeen = effectiveContext;
     if (minContextSeen === null || effectiveContext < minContextSeen) minContextSeen = effectiveContext;
 
-    // Decimate to roughly ~70 chart points, but always keep the first 100 turns, every
-    // compaction and every cold start (cached === 0). The stride grows with the conversation
-    // so the timeline stays bounded without dropping interesting turns.
-    //
-    // The keep-decision deliberately ignores how rows were batched (we never force-keep the
-    // last row of a batch), so an incremental pass keeps exactly the same points as a full
-    // pass. The newest turn is appended for display in readAllTelemetry().
+    // Keep 1:1 timeline fidelity across all turns so chart tooltip and horizontal progression
+    // reflect exact turns without downsampling distortion.
     const turnNumber = idx + 1;
-    const stride = Math.max(1, Math.ceil(turnNumber / 70));
-    if (turnNumber <= 100 || turnCompacted || cached === 0 || (idx - lastKeptIdx) >= stride) {
-      lastKeptIdx = idx;
-      contextTimeline.push({
-        idx,
-        turn: turnNumber,
-        input: effectiveContext,
-        totalInput,
-        cached,
-        fresh: nonCached,
-        output,
-        thinking,
-        isCompacted: turnCompacted,
-        compactedAmount: turnCompactedAmt
-      });
-    }
+    lastKeptIdx = idx;
+    contextTimeline.push({
+      idx,
+      turn: turnNumber,
+      input: effectiveContext,
+      totalInput,
+      cached,
+      fresh: nonCached,
+      output,
+      thinking,
+      isCompacted: turnCompacted,
+      compactedAmount: turnCompactedAmt
+    });
   }
 
   const totalInput = totalNonCached + totalCached;
