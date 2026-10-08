@@ -123,7 +123,7 @@ Root Message
  ├── Tag 1 (Message)
  │    ├── Tag 19 (String): Model Name (e.g. "gemini-3.8-flash")
  │    ├── Tag 4 (Message): USAGE METADATA
- │    │    ├── Tag 2  (Varint): Non-cached Input Tokens (fresh prompt / Cache Write)
+ │    │    ├── Tag 2  (Varint): Non-cached Input Tokens (fresh prompt / Uncached Input)
  │    │    ├── Tag 5  (Varint): Cached Input Tokens (served from cache / Cache Read)
  │    │    ├── Tag 3  (Varint): Candidates / Output Tokens (total generation)
  │    │    ├── Tag 9  (Varint): Thinking Tokens (internal reasoning)
@@ -165,9 +165,9 @@ ceiling, and compaction detection. A drop between consecutive values **is** a co
 
 | Quantity                  | Source                                              |
 | ------------------------- | --------------------------------------------------- |
-| Cache Read                | `Tag 4 → Tag 5`                                     |
-| Cache Write (fresh input) | `Tag 4 → Tag 2`                                     |
-| Total Input               | `Tag 2 + Tag 5`                                     |
+| Cache Read                    | `Tag 4 → Tag 5`                                     |
+| Uncached Input (fresh input) | `Tag 4 → Tag 2`                                     |
+| Total Input                   | `Tag 2 + Tag 5`                                     |
 | Model Output              | `Tag 3` = thinking (`Tag 9`) + response (`Tag 10`)  |
 | Grand Total               | Total Input + Model Output                          |
 | Current Context           | `Tag 9 → Tag 10 → Tag 1` (fallback `Tag 2 + Tag 5`) |
@@ -350,12 +350,12 @@ one action, so recoverability matters more than the few seconds saved.
 
 **Open**
 
-1. **Non-JSON catalog fallback is incomplete (low).** `getConversationSummaries()` falls back to delimiter splitting when `sqlite3` lacks `-json`. That path does not fetch `parent_conversation_id` / `agent_name` / `nesting_depth` / `killed`, so if it ever ran, every conversation would be treated as a human chat — no drawers, no Unattached group, and `selectActiveConversation()` would degrade to mtime order. It is _graceful_ (nothing is hidden or lost; all rows still render as flat chats) and dormant on `sqlite3` 3.50.6. Fixing it would also make the subagent features resilient to an ancient `sqlite3`.
-2. **Cold start is ~2 s** after a window reload. Single-process `sqlite3` batching was deliberately cut for leanness; the warm path is ~30 ms. Revisit only if the cold delay becomes annoying.
-3. **~100 KB of stats JSON** is posted to the webview on every refresh. Fine at the current size; if the dashboard ever feels heavy, send only the selected conversation's timeline.
+1. **Cold start is ~2 s** after a window reload. Single-process `sqlite3` batching was deliberately cut for leanness; the warm path is ~30 ms. Revisit only if the cold delay becomes annoying.
+2. **~100 KB of stats JSON** is posted to the webview on every refresh. Fine at the current size; if the dashboard ever feels heavy, send only the selected conversation's timeline.
 
 **Resolved**
 
+- **Non-JSON catalog fallback completed**: Added full parity for subagent hierarchy (`parent_conversation_id`, `nesting_depth`, `agent_name`, `killed`, and `HEX(raw_summary)` role extraction) to the delimiter-split fallback path.
 - **Bulk automated ghost purging removed**: Replaced with safe per-conversation deletion to eliminate data loss risk from temporary catalog lockouts.
 - **Dual-scroll layout resolved**: Pinned header and flex-1 scroll container eliminate nested scroll jail across viewport sizes.
 - **Packaging workflow established**: Added `.vscodeignore` and `npm run package` producing a self-contained 58 KB `.vsix` installer.

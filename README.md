@@ -1,4 +1,4 @@
-# Antigravity Telemetry - Context & Token Monitor (VS Code Extension)
+# <img src="./media/icon.png" width="36" height="36" align="center" alt="Antigravity Telemetry Logo" /> Antigravity Telemetry - Context & Token Monitor (VS Code Extension)
 
 [![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/HarshMann.antigravity-telemetry?color=blue&style=flat-square&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
 [![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/HarshMann.antigravity-telemetry?color=emerald&style=flat-square&label=installs)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
@@ -47,7 +47,7 @@ drown out the one you are working in (see **§5 Workspace Scoping**).
 Opens side-by-side with your code (`Ctrl + W` to close anytime) and updates live via `postMessage`:
 
 - **Split-Window Optimized**: Active KPIs and context timeline sit directly at the top with zero scrolling required in narrow split editor views.
-- **4 Top KPIs**: Context Window (fill % & headroom against the real ceiling), Cache Read (cached tokens & hit %), Cache Write (fresh prompt tokens), and Model Output (generated tokens & thinking ratio).
+- **4 Top KPIs**: Context Window (fill % & headroom against the real ceiling), Cache Read (cached tokens & hit %), Uncached Input (fresh prompt tokens), and Model Output (generated tokens & thinking ratio).
 - **Scope Controls**: A workspace dropdown switches between your current project, all workspaces, or any individual workspace, and a view chip switches between `All · Chats · Subagents`. Both are transient, so the view always tells you what you are looking at.
 - **Dual-Layer Interactive Timeline (SVG)**:
   - **Blue curve**: Total Context progression across all turns, read from Antigravity's own trajectory context counter.
@@ -59,6 +59,7 @@ Opens side-by-side with your code (`Ctrl + W` to close anytime) and updates live
   - **📊 Per-Turn Averages**: Average context, output, thinking tokens, and cache volume.
   - **🛡️ Cache Performance**: Total hits vs. calls, cold start misses, and compaction count.
   - **🏔️ Session Peaks**: Peak context reached (% of the ceiling), peak generation, and peak reasoning tokens.
+- **🔄 On-Demand Manual Refresh**: Click the header refresh button anytime for an immediate reload with spinning tactile feedback and live update confirmation.
 
 ---
 
@@ -105,6 +106,8 @@ write their own conversation records. They are **nested, never hidden** — one 
 - **Rolled-up accounting**: selecting a parent shows a _Subagents & Background Workers_ card listing each child plus `Parent + Subagents = Total`, so a session's true cost is never understated.
 - **Breadcrumb**: selecting a subagent links back to its parent — and degrades gracefully (name only, or "no longer available") when the parent has no local data.
 - **Unattached group**: children whose parent is not on disk appear in their own collapsed group rather than disappearing.
+- **Role & Task Decoding**: Decodes protobuf task records so subagents display their genuine specialized roles (e.g. `Icon Designer`, `Research Assistant`) instead of generic "Untitled Conversation" labels.
+- **Collapsible Breakdown Card**: The Subagents & Background Workers card in the detail view features an interactive expand/collapse toggle with smooth scrolling for sessions with multiple workers.
 - **Human chats drive the footer**: a background worker finishing later cannot take over the status bar.
 
 ---

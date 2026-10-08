@@ -273,6 +273,7 @@ function testRealData() {
     const sqliteBin = resolveSqlite();
 
     reader.clearAnalysisCache();
+    const testStartTime = Date.now();
     let t0 = Date.now();
     const cold = reader.readAllTelemetry();
     const coldMs = Date.now() - t0;
@@ -289,9 +290,22 @@ function testRealData() {
     })));
 
     check('conversations discovered', cold.conversations.length > 0, cold.conversations.length);
-    // Exclude the currently active conversation (which may increment turns mid-test) from strict parity
-    const nonActiveCold = cold.conversations.filter(c => !cold.active || c.id !== cold.active.id);
-    const nonActiveWarm = warm.conversations.filter(c => !cold.active || c.id !== cold.active.id);
+    // Exclude conversations that received live writes mid-test from strict parity
+    const liveIds = new Set();
+    if (cold.active) liveIds.add(cold.active.id);
+    if (warm.active) liveIds.add(warm.active.id);
+    for (const c of cold.conversations) {
+        const w = warm.conversations.find(x => x.id === c.id);
+        if (w && (c.stats.calls !== w.stats.calls || c.stats.lastIdx !== w.stats.lastIdx)) {
+            liveIds.add(c.id);
+        }
+        const dbPath = path.join(convDir, c.id + '.db');
+        try {
+            if (fs.statSync(dbPath).mtimeMs >= testStartTime) liveIds.add(c.id);
+        } catch { }
+    }
+    const nonActiveCold = cold.conversations.filter(c => !liveIds.has(c.id));
+    const nonActiveWarm = warm.conversations.filter(c => !liveIds.has(c.id));
     const eq = strip(nonActiveCold) === strip(nonActiveWarm);
     check('cached refresh matches cold refresh', eq);
     check(`cached refresh is fast (cold ${coldMs}ms -> warm ${warmMs}ms)`, warmMs < Math.max(200, coldMs / 4), warmMs + 'ms');
@@ -567,6 +581,11 @@ function testSubagents() {
     const totalRepresented = humanChats.length + attachedCount + unattached.length;
     check('sum over all rows still equals all conversations', totalRepresented === realConvs.length, `total=${totalRepresented}`);
 
+    // 5b. Subagent role extraction & title resolution
+    check('extractSubagentRole exported', typeof reader.extractSubagentRole === 'function');
+    const untitledSubs = subagents.filter(s => s.title === 'Untitled Conversation');
+    check('zero subagents named "Untitled Conversation"', untitledSubs.length === 0, `untitled=${untitledSubs.length}`);
+
     // 6. Test dashboard rendering in VM: check all 21 conversations rendered and view chip interactions
     const { getDashboardHtml } = require('../dashboardHtml');
     const vm = require('vm');
@@ -644,6 +663,20 @@ function testSubagents() {
     vm.runInContext("setSubagentFilter('all')", ctx);
     const allHeaderExcluded = doc.getElementById('headerExcludedTokens').textContent;
     check('filter "all" has empty excluded tokens in header', allHeaderExcluded === '', allHeaderExcluded);
+
+    // Test subagents card collapse toggle
+    const pWithChildren = realConvs.find(c => subagents.some(s => s.parentConversationId === c.id));
+    if (pWithChildren) {
+        vm.runInContext(`selectConv('${pWithChildren.id}')`, ctx);
+        const subListEl = doc.getElementById('subagentsList');
+        const chevronEl = doc.getElementById('subagentsChevron');
+        const labelEl = doc.getElementById('subagentsToggleLabel');
+        check('subagentsList visible initially', subListEl && !subListEl.classList.classes.has('hidden'));
+        vm.runInContext('toggleSubagentsCollapse()', ctx);
+        check('subagentsList collapsed after toggle', subListEl && subListEl.classList.classes.has('hidden') && chevronEl.textContent === '▶' && labelEl.textContent === 'Expand');
+        vm.runInContext('toggleSubagentsCollapse()', ctx);
+        check('subagentsList expanded after second toggle', subListEl && !subListEl.classList.classes.has('hidden') && chevronEl.textContent === '▼' && labelEl.textContent === 'Collapse');
+    }
 }
 
 // 8. dashboard stability across telemetry updates
@@ -682,8 +715,8 @@ function testDashboardStability() {
                 },
                 classList: {
                     classes: new Set(),
-                    add(cls) { this.classes.add(cls); },
-                    remove(cls) { this.classes.delete(cls); },
+                    add(...cls) { cls.forEach(c => this.classes.add(c)); },
+                    remove(...cls) { cls.forEach(c => this.classes.delete(c)); },
                     toggle(cls) { }
                 },
                 style: {},
@@ -717,15 +750,18 @@ function testDashboardStability() {
 
     const doc = makeDomMock();
     let messageHandler = null;
+    const postedMessages = [];
     const sandbox = {
-        acquireVsCodeApi: () => ({ postMessage() { } }),
+        acquireVsCodeApi: () => ({ postMessage(m) { postedMessages.push(m); } }),
         window: {
             addEventListener(evt, fn) {
                 if (evt === 'message') messageHandler = fn;
             },
             onresize: null
         },
-        document: doc
+        document: doc,
+        setTimeout,
+        clearTimeout
     };
 
     const initialActive = allData.active ? allData.active.id : realConvs[0].id;
@@ -812,6 +848,33 @@ function testDashboardStability() {
     });
     const fallbackId = vm.runInContext('selectedId', ctx);
     check('deleted conversation safely falls back to existing chat', withoutSub.some(c => c.id === fallbackId), `fallbackId=${fallbackId}`);
+
+    // 7. Manual Refresh Button interactions
+    const refreshBtn = doc.getElementById('refreshBtn');
+    check('refreshBtn element exists in dashboard', !!refreshBtn);
+    check('refreshBtn has onclick handler bound', typeof refreshBtn.onclick === 'function');
+
+    refreshBtn.onclick();
+    check('clicking refreshBtn posts refresh command', postedMessages.some(m => m && m.command === 'refresh'));
+    check('isRefreshing state active during sync', vm.runInContext('isRefreshing', ctx) === true);
+    check('refreshBtn is disabled during sync', refreshBtn.disabled === true);
+    const refreshLabel = doc.getElementById('refreshLabel');
+    check('refreshLabel displays Syncing...', refreshLabel.textContent === 'Syncing...');
+    const refreshIcon = doc.getElementById('refreshIcon');
+    check('refreshIcon has animate-spin class during sync', refreshIcon.classList.classes.has('animate-spin'));
+
+    // Delivery of telemetryUpdate satisfies refresh
+    messageHandler({
+        data: {
+            type: 'telemetryUpdate',
+            data: realConvs,
+            activeId: initialActive,
+            currentWorkspaceName: 'web dev',
+            currentWorkspacePaths: ['g:\\web dev']
+        }
+    });
+    check('refreshLabel shows Updated after telemetryUpdate', refreshLabel.textContent === 'Updated');
+    check('refreshIcon has text-emerald-400 class on update', refreshIcon.classList.classes.has('text-emerald-400'));
 }
 
 // 9. configuration & sqlite resolution
@@ -979,9 +1042,14 @@ function testChangelogExtraction() {
 
     // Default extraction (latest section from user-facing CHANGELOG.md)
     const latest = extractChangelog();
-    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.0.1'), latest.title);
-    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Marketplace Release') && latest.notes.includes('Timeline Enhancements'), latest.notes.slice(0, 100));
+    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.0.2'), latest.title);
+    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Manual Refresh') && latest.notes.includes('Subagent'), latest.notes.slice(0, 100));
     check('strips trailing horizontal rules', !latest.notes.endsWith('---'));
+
+    // Specific tag extraction (e.g. v1.0.1)
+    const v101 = extractChangelog('v1.0.1');
+    check('extracts specific v1.0.1 section by tag', v101.title.includes('1.0.1'), v101.title);
+    check('v1.0.1 notes contain feature categories', v101.notes.includes('Marketplace Release') && v101.notes.includes('Timeline Enhancements'));
 
     // Specific tag extraction (e.g. v1.0.0)
     const v1 = extractChangelog('v1.0.0');

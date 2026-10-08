@@ -4,6 +4,7 @@
 function getDashboardHtml(conversations, activeId, options = {}) {
   const {
     cssUri = '',
+    iconUri = '',
     nonce = '',
     cspSource = '',
     deleteToRecycleBin = true
@@ -66,9 +67,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     <div class="p-3 card-bg border border-color rounded-xl shadow-sm space-y-3 shrink-0">
       <div class="flex flex-wrap items-center justify-between gap-2">
         <div class="flex items-center gap-2.5">
-          <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-base border border-emerald-500/30">
+          ${iconUri ? `
+          <img src="${iconUri}" class="w-8 h-8 rounded-lg object-contain shadow-sm shrink-0" alt="Antigravity Telemetry Logo" />
+          ` : `
+          <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-base border border-emerald-500/30 shrink-0">
             ⚡
           </div>
+          `}
           <div>
             <div class="flex items-center gap-2">
               <h1 class="text-sm font-semibold tracking-tight text-[var(--vscode-editor-foreground,#f4f4f5)]">Antigravity Telemetry</h1>
@@ -105,6 +110,16 @@ function getDashboardHtml(conversations, activeId, options = {}) {
               🗂️ All Sessions (<span id="tabListCount">${conversations.length}</span>)
             </button>
           </div>
+
+          <!-- Manual Refresh Button -->
+          <button id="refreshBtn"
+            title="Refresh Telemetry Data"
+            class="flex items-center gap-1.5 px-2.5 py-1.5 inner-bg hover:bg-zinc-700/40 active:scale-95 border border-color rounded-lg text-xs font-medium text-[var(--vscode-editor-foreground,#f4f4f5)] transition-all cursor-pointer shadow-sm">
+            <svg id="refreshIcon" class="w-3.5 h-3.5 text-zinc-400 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span id="refreshLabel" class="hidden sm:inline">Refresh</span>
+          </button>
         </div>
       </div>
 
@@ -173,7 +188,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           </div>
 
           <div class="p-2.5 inner-bg border border-color rounded-lg">
-            <div class="text-[10px] muted-color">Cache Write</div>
+            <div class="text-[10px] muted-color">Uncached Input</div>
             <div id="kpiCacheWrite" class="text-base font-bold text-cyan-400">0</div>
             <div id="kpiCacheWriteSub" class="text-[10px] muted-color">0% vol · +0 avg / turn</div>
           </div>
@@ -188,17 +203,21 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
       <!-- 🤖 Subagents & Background Workers Card (Shown when selected chat has spawned children) -->
       <div id="subagentsCard" class="hidden p-3 card-bg border border-color rounded-xl space-y-2.5">
-        <div class="flex flex-wrap items-center justify-between gap-2">
+        <div id="subagentsToggleBtn" class="flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none group" title="Click to minimize or expand subagents">
           <div class="flex items-center gap-2">
-            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">🤖 Subagents & Background Workers</h3>
+            <span id="subagentsChevron" class="text-[10px] text-zinc-400 group-hover:text-zinc-200 transition-transform duration-150">▼</span>
+            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)] group-hover:text-blue-300 transition-colors">🤖 Subagents & Background Workers</h3>
             <span id="subagentsCountBadge" class="text-[10px] px-2 py-0.5 rounded inner-bg border border-color text-purple-300 font-semibold">0 subagents</span>
           </div>
-          <div id="subagentsRolledUpTotal" class="text-xs font-semibold text-emerald-400">
-            <!-- Populated by JS: Parent (X) + Subagents (Y) = Z total -->
+          <div class="flex items-center gap-3">
+            <div id="subagentsRolledUpTotal" class="text-xs font-semibold text-emerald-400">
+              <!-- Populated by JS: Parent (X) + Subagents (Y) = Z total -->
+            </div>
+            <span id="subagentsToggleLabel" class="text-[10px] text-zinc-400 group-hover:text-zinc-200 border border-transparent group-hover:border-color px-1.5 py-0.5 rounded transition-all">Collapse</span>
           </div>
         </div>
 
-        <div id="subagentsList" class="space-y-1.5">
+        <div id="subagentsList" class="space-y-1.5 max-h-72 overflow-y-auto custom-scrollbar pr-0.5">
           <!-- Populated by JS -->
         </div>
       </div>
@@ -207,12 +226,12 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       <div class="p-3 card-bg border border-color rounded-xl space-y-2.5">
         <div class="flex items-center justify-between">
           <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Token Composition</h3>
-          <span class="text-[10px] muted-color">Cache Read vs Cache Write vs Model Output</span>
+          <span class="text-[10px] muted-color">Cache Read vs Uncached Input vs Model Output</span>
         </div>
 
         <div class="h-3.5 w-full inner-bg rounded-full overflow-hidden flex border border-color">
           <div id="barCacheRead" class="bg-blue-500 h-full transition-all duration-300" style="width: 0%" title="Cache Read (Cached Prompt)"></div>
-          <div id="barCacheWrite" class="bg-cyan-400 h-full transition-all duration-300" style="width: 0%" title="Cache Write (Fresh Prompt)"></div>
+          <div id="barCacheWrite" class="bg-cyan-400 h-full transition-all duration-300" style="width: 0%" title="Uncached Input (Fresh Prompt)"></div>
           <div id="barOutput" class="bg-emerald-400 h-full transition-all duration-300" style="width: 0%" title="Model Output (Generation)"></div>
         </div>
 
@@ -229,7 +248,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 shrink-0"></span>
             <div>
               <div class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]" id="legCacheWrite">0</div>
-              <div class="text-[10px] muted-color">Cache Write (<span id="legCacheWritePct">0%</span>)</div>
+              <div class="text-[10px] muted-color">Uncached Input (<span id="legCacheWritePct">0%</span>)</div>
             </div>
           </div>
 
@@ -291,7 +310,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
                 <span id="ttCached" class="font-mono font-semibold text-emerald-400">--</span>
               </div>
               <div class="flex justify-between gap-4">
-                <span class="muted-color">Cache Write:</span>
+                <span class="muted-color">Uncached Input:</span>
                 <span id="ttFresh" class="font-mono font-semibold text-cyan-400">--</span>
               </div>
               <div class="flex justify-between gap-4">
@@ -327,7 +346,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             <div id="metaLastContext" class="text-sm font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</div>
             <div class="text-[10px] space-y-0.5">
               <div class="flex justify-between">
-                <span class="muted-color">Cache Write:</span>
+                <span class="muted-color">Uncached Input:</span>
                 <span id="metaLastFresh" class="font-medium text-cyan-400">+0 fresh</span>
               </div>
               <div class="flex justify-between">
@@ -474,6 +493,9 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     let pendingDeleteId = null;
     let expandedDrawers = new Set();
     let unattachedExpanded = false;
+    let subagentsCardCollapsed = false;
+    let isRefreshing = false;
+    let refreshTimeout = null;
 
     window.addEventListener('message', event => {
       const msg = event.data;
@@ -512,8 +534,94 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         filterList();
         renderDetail();
         updateGlobalHeaders();
+        if (isRefreshing) {
+          resetRefreshButton(true);
+        }
       }
     });
+
+    function handleManualRefresh() {
+      if (isRefreshing) return;
+      isRefreshing = true;
+
+      const btn = document.getElementById('refreshBtn');
+      const icon = document.getElementById('refreshIcon');
+      const label = document.getElementById('refreshLabel');
+
+      if (btn) {
+        btn.disabled = true;
+        btn.title = 'Syncing telemetry...';
+        btn.classList.add('opacity-75', 'cursor-not-allowed');
+      }
+      if (icon) {
+        icon.classList.add('animate-spin', 'text-blue-400');
+        icon.classList.remove('text-zinc-400', 'text-emerald-400');
+      }
+      if (label) {
+        label.textContent = 'Syncing...';
+      }
+
+      vscode.postMessage({ command: 'refresh' });
+
+      if (refreshTimeout) clearTimeout(refreshTimeout);
+      refreshTimeout = setTimeout(() => {
+        resetRefreshButton(false);
+      }, 3000);
+    }
+
+    function resetRefreshButton(success) {
+      if (refreshTimeout) {
+        clearTimeout(refreshTimeout);
+        refreshTimeout = null;
+      }
+      const btn = document.getElementById('refreshBtn');
+      const icon = document.getElementById('refreshIcon');
+      const label = document.getElementById('refreshLabel');
+
+      if (icon) {
+        icon.classList.remove('animate-spin', 'text-blue-400');
+      }
+
+      if (success) {
+        if (btn) btn.title = 'Telemetry updated';
+        if (icon) icon.classList.add('text-emerald-400');
+        if (label) {
+          label.textContent = 'Updated';
+          label.classList.add('text-emerald-400');
+        }
+        setTimeout(() => {
+          if (icon) {
+            icon.classList.remove('text-emerald-400');
+            icon.classList.add('text-zinc-400');
+          }
+          if (label) {
+            label.textContent = 'Refresh';
+            label.classList.remove('text-emerald-400');
+          }
+          if (btn) {
+            btn.title = 'Refresh Telemetry Data';
+            btn.disabled = false;
+            btn.classList.remove('opacity-75', 'cursor-not-allowed');
+          }
+          isRefreshing = false;
+        }, 800);
+      } else {
+        if (btn) {
+          btn.title = 'Refresh Telemetry Data';
+          btn.disabled = false;
+          btn.classList.remove('opacity-75', 'cursor-not-allowed');
+        }
+        if (icon) {
+          icon.classList.remove('text-emerald-400');
+          icon.classList.add('text-zinc-400');
+        }
+        if (label) {
+          label.textContent = 'Refresh';
+          label.classList.remove('text-emerald-400');
+        }
+        isRefreshing = false;
+      }
+    }
 
     function normWorkspacePath(p) {
       if (!p || typeof p !== 'string') return '';
@@ -748,12 +856,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         let fullTitle = '';
         if (c.isSubagent) {
           const agent = c.agentName || 'subagent';
-          const hasTitle = c.title && c.title !== '<original_task>' && c.title.trim() !== agent;
-          if (hasTitle) {
-            let tClean = c.title.trim();
+          const hasTitle = c.title && c.title !== '<original_task>' && c.title !== 'Untitled Conversation' && c.title !== 'Untitled' && c.title.trim() !== agent;
+          const display = hasTitle ? c.title.trim() : (c.agentRole ? c.agentRole.trim() : '');
+          if (display) {
+            let tClean = display;
             if (tClean.length > 28) tClean = tClean.slice(0, 26).trim() + '…';
             titleText = '🤖 [' + agent + '] ' + tClean;
-            fullTitle = '🤖 [' + agent + '] ' + c.title.trim();
+            fullTitle = '🤖 [' + agent + '] ' + display;
           } else {
             titleText = '🤖 [' + agent + ']';
             fullTitle = '🤖 [' + agent + ']';
@@ -776,7 +885,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         select.value = selectedId;
         const cur = CONVERSATIONS.find(c => c.id === selectedId);
         if (cur) {
-          select.title = (cur.isSubagent ? '🤖 [' + (cur.agentName || 'subagent') + '] ' : '') + (cur.title || 'Untitled');
+          const agent = cur.agentName || 'subagent';
+          const hasTask = cur.title && cur.title !== '<original_task>' && cur.title !== 'Untitled Conversation' && cur.title !== 'Untitled' && cur.title.trim() !== agent;
+          const task = hasTask ? cur.title.trim() : (cur.agentRole ? cur.agentRole.trim() : '');
+          select.title = cur.isSubagent ? ('🤖 [' + agent + ']' + (task ? ' ' + task : '')) : (cur.title || 'Untitled');
         }
       }
     }
@@ -827,8 +939,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         let titleHtml = '';
         if (c.isSubagent) {
           const agentLabel = escapeHtml(c.agentName || 'subagent');
-          const hasTitle = c.title && c.title !== '<original_task>' && c.title.trim() !== c.agentName;
-          const cleanTitle = hasTitle ? c.title.trim() : '';
+          const hasTitle = c.title && c.title !== '<original_task>' && c.title !== 'Untitled Conversation' && c.title !== 'Untitled' && c.title.trim() !== c.agentName;
+          const cleanTitle = (hasTitle ? c.title.trim() : (c.agentRole ? c.agentRole.trim() : '')).trim();
           let displayTitle = cleanTitle;
           if (displayTitle.length > 38) {
             displayTitle = displayTitle.slice(0, 36).trim() + '…';
@@ -889,7 +1001,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       if (currentSubagentFilter === 'subagents') {
         const subs = wsList.filter(c => c.isSubagent);
         const filtered = q
-          ? subs.filter(c => (c.agentName || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q))
+          ? subs.filter(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q))
           : subs;
         if (filtered.length === 0) {
           container.innerHTML = '<div class="text-xs muted-color p-4 text-center">No subagents match filter</div>';
@@ -926,13 +1038,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         visibleHumans = humanChats.filter(h => {
           const hMatch = (h.title || '').toLowerCase().includes(q) || (h.id || '').toLowerCase().includes(q);
           const children = parentToChildren.get(h.id) || [];
-          const cMatch = children.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
+          const cMatch = children.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
           if (cMatch) expandedDrawers.add(h.id);
           return hMatch || cMatch;
         });
 
         visibleUnattached = unattached.filter(u => {
-          const uMatch = (u.agentName || '').toLowerCase().includes(q) || (u.title || '').toLowerCase().includes(q) || (u.id || '').toLowerCase().includes(q);
+          const uMatch = (u.agentName || '').toLowerCase().includes(q) || (u.agentRole || '').toLowerCase().includes(q) || (u.title || '').toLowerCase().includes(q) || (u.id || '').toLowerCase().includes(q);
           if (uMatch) unattachedExpanded = true;
           return uMatch;
         });
@@ -1136,13 +1248,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           subBadge.classList.remove('hidden');
           if (agentVal) agentVal.textContent = conv.agentName || 'subagent';
         }
-        const hasTitle = conv.title && conv.title !== '<original_task>' && conv.title.trim() !== conv.agentName;
-        let headTitle = hasTitle ? conv.title.trim() : (conv.agentName || 'Subagent');
+        const hasTitle = conv.title && conv.title !== '<original_task>' && conv.title !== 'Untitled Conversation' && conv.title !== 'Untitled' && conv.title.trim() !== conv.agentName;
+        let headTitle = hasTitle ? conv.title.trim() : (conv.agentRole ? conv.agentRole.trim() : (conv.agentName || 'Subagent'));
         if (headTitle.length > 60) {
           headTitle = headTitle.slice(0, 58).trim() + '…';
         }
         document.getElementById('chatTitle').textContent = headTitle;
-        document.getElementById('chatTitle').title = conv.title || '';
+        document.getElementById('chatTitle').title = (hasTitle ? conv.title : (conv.agentRole || conv.agentName || '')) || '';
 
         if (breadcrumb) {
           breadcrumb.classList.remove('hidden');
@@ -1213,8 +1325,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
             const left = document.createElement('div');
             left.className = 'flex items-center gap-2 min-w-0';
-            const hasTask = ch.title && ch.title !== '<original_task>' && ch.title.trim() !== ch.agentName;
-            let displayTask = hasTask ? ch.title.trim() : (ch.agentName || ch.id.slice(0, 8));
+            const hasTask = ch.title && ch.title !== '<original_task>' && ch.title !== 'Untitled Conversation' && ch.title !== 'Untitled' && ch.title.trim() !== ch.agentName;
+            let displayTask = hasTask ? ch.title.trim() : (ch.agentRole ? ch.agentRole.trim() : (ch.agentName || ch.id.slice(0, 8)));
             if (displayTask.length > 36) displayTask = displayTask.slice(0, 34).trim() + '…';
             left.innerHTML = 
               '<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">🤖 ' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
@@ -1242,6 +1354,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             '<span class="muted-color">Parent (' + formatTok(parentTok) + ') + Subagents (' + formatTok(childTok) + ') = </span>' +
             '<span class="text-emerald-400 font-bold">' + formatTok(rolledTok) + ' total</span>';
         }
+        updateSubagentsCollapseState();
       } else {
         if (subCard) subCard.classList.add('hidden');
       }
@@ -1359,6 +1472,27 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
       currentTimeline = s.contextTimeline || [];
       renderChart(currentTimeline);
+    }
+
+    function toggleSubagentsCollapse() {
+      subagentsCardCollapsed = !subagentsCardCollapsed;
+      updateSubagentsCollapseState();
+    }
+
+    function updateSubagentsCollapseState() {
+      const list = document.getElementById('subagentsList');
+      const chevron = document.getElementById('subagentsChevron');
+      const label = document.getElementById('subagentsToggleLabel');
+      if (!list) return;
+      if (subagentsCardCollapsed) {
+        list.classList.add('hidden');
+        if (chevron) chevron.textContent = '▶';
+        if (label) label.textContent = 'Expand';
+      } else {
+        list.classList.remove('hidden');
+        if (chevron) chevron.textContent = '▼';
+        if (label) label.textContent = 'Collapse';
+      }
     }
 
     function renderChart(timeline) {
@@ -1619,11 +1753,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         ['chipAllBtn', () => setSubagentFilter('all')],
         ['chipChatsBtn', () => setSubagentFilter('chats')],
         ['chipSubagentsBtn', () => setSubagentFilter('subagents')],
+        ['refreshBtn', () => handleManualRefresh()],
         ['chatSelect', null],
         ['searchInput', null],
         ['deleteChatBtn', () => promptDeleteCurrent()],
         ['delModalCancelBtn', () => closeDeleteModal()],
-        ['delModalConfirmBtn', () => confirmDeleteExec()]
+        ['delModalConfirmBtn', () => confirmDeleteExec()],
+        ['subagentsToggleBtn', () => toggleSubagentsCollapse()]
       ];
       for (const [id, handler] of handlers) {
         if (!handler) continue;

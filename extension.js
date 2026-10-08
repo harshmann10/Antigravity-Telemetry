@@ -219,7 +219,7 @@ function updateStatusBar() {
   md.appendMarkdown(`* **Context Usage:** \`${shortContext} / ${limitStr}\` tokens (${contextPct}%)\n`);
   md.appendMarkdown(`* **Window Meter:** \`[${progressBar}]\`\n`);
   md.appendMarkdown(`* **Cache Read:** **${formatTokens(s.totalCached)}** (${s.cacheVolumeRate}% vol · ${s.cacheHitRate}% hits)\n`);
-  md.appendMarkdown(`* **Cache Write:** **${formatTokens(s.totalNonCached)}** (fresh prompt)\n`);
+  md.appendMarkdown(`* **Uncached Input:** **${formatTokens(s.totalNonCached)}** (fresh prompt)\n`);
   md.appendMarkdown(`* **Model Output:** **${formatTokens(s.totalOutput)}** tokens\n\n`);
   md.appendMarkdown(`---\n`);
   md.appendMarkdown(`*Click to open Telemetry Menu or Visual Dashboard*`);
@@ -356,8 +356,11 @@ async function showHistoryPicker() {
     const wsBadge = c.workspaceName ? ` [${c.workspaceName}]` : '';
     const dateStr = c.lastModified ? new Date(c.lastModified).toLocaleString() : '';
 
+    const prefix = c.isSubagent ? `[${c.agentName || 'subagent'}] ` : '';
+    const icon = c.isSubagent ? '$(hubot)' : '$(comment-discussion)';
+
     return {
-      label: `$(comment-discussion) ${c.title || 'Untitled'}${wsBadge}${badge}`,
+      label: `${icon} ${prefix}${c.title || 'Untitled'}${wsBadge}${badge}`,
       description: `${formatTokens(s ? s.grandTotal : 0)} tok · ${s ? s.cacheHitRate : 0}% cache · ${s ? s.calls : 0} calls`,
       detail: `Peak Context: ${formatTokens(s ? s.peakContext : 0)} | Last Active: ${dateStr}`,
       convId: c.id
@@ -390,9 +393,10 @@ async function promptDeleteConversation() {
     const badge = isAct ? ' (ACTIVE)' : '';
     const wsBadge = c.workspaceName ? ` [${c.workspaceName}]` : '';
     const dateStr = c.lastModified ? new Date(c.lastModified).toLocaleString() : '';
+    const prefix = c.isSubagent ? `[${c.agentName || 'subagent'}] ` : '';
 
     return {
-      label: `$(trash) ${c.title || 'Untitled'}${wsBadge}${badge}`,
+      label: `$(trash) ${prefix}${c.title || 'Untitled'}${wsBadge}${badge}`,
       description: `${c.storageMB} MB · ${formatTokens(s ? s.grandTotal : 0)} tok`,
       detail: `ID: ${c.id} | Last Active: ${dateStr}`,
       convId: c.id,
@@ -456,11 +460,17 @@ function openDashboard(selectedConvId) {
     }
   );
 
+  if (mediaRoot) {
+    currentPanel.iconPath = vscode.Uri.joinPath(mediaRoot, 'icon.png');
+  }
+
   const cssUri = mediaRoot ? currentPanel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'dashboard.css')).toString() : '';
+  const iconUri = mediaRoot ? currentPanel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'icon.png')).toString() : '';
   const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
   currentPanel.webview.html = getDashboardHtml(telemetryState.conversations, targetId, {
     cssUri,
+    iconUri,
     nonce,
     cspSource: currentPanel.webview.cspSource,
     deleteToRecycleBin: getConfig().deleteToRecycleBin,
@@ -480,6 +490,8 @@ function openDashboard(selectedConvId) {
       } catch (err) {
         vscode.window.showErrorMessage(`Failed to delete conversation: ${err.message}`);
       }
+    } else if (message.command === 'refresh') {
+      updateTelemetry();
     }
   });
 

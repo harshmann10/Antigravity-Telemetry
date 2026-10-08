@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.2] - 2026-10-08
+
+### 🔄 Manual Refresh & Subagent Intelligence
+
+#### ⚡ On-Demand Manual Refresh
+- **Manual Refresh Button in Visual Dashboard**: Added a dedicated `Refresh` button in the top header with tactile press feedback (`active:scale-95`).
+- **Live Sync & Animation State**: Triggers immediate telemetry re-read with animated SVG rotation, disabled spam-prevention state, and temporary emerald `Updated` confirmation before resetting.
+- **Responsive Layout**: Automatically collapses to a compact icon-only button on narrow split-editor views to preserve header readability.
+
+#### 🤖 Subagent Role Decoding & Hierarchy
+- **Resolved "Untitled Conversation"**: Decoded protobuf `raw_summary` records (`Tag 17 → Tag 8 → Tag 2`) across both JSON and delimiter catalog fallback paths to extract genuine subagent task roles (e.g., `Icon Designer - Concept 1`, `Research Assistant`), eliminating generic "Untitled Conversation" labels.
+- **Collapsible Subagents Section**: Added an interactive toggle (`▼ Collapse` / `▶ Expand`) to the subagent breakdown card in the Chat Telemetry detail view with clean animations and scrollable overflow container.
+- **Non-JSON Catalog Parity**: Extended delimiter parsing fallback to support full subagent hierarchy extraction.
+
+#### 🎨 Branding & Visual Polish
+- **Official Extension Icon in Webview Panel**: Integrated high-resolution `media/icon.png` into the Webview panel tab icon and dashboard header brand badge.
+
+---
+
 ## [1.0.1] - 2026-10-04
 
 ### 🚀 Visual Studio Code Marketplace Release & Timeline Enhancements

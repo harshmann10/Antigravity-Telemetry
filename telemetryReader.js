@@ -213,6 +213,66 @@ function conversationMatchesWorkspace(conv, currentFolderPaths) {
   return false;
 }
 
+// Extracts the subagent role/task string from Antigravity's raw_summary protobuf blob.
+// In the protobuf layout: Tag 17 (invocation metadata) -> Tag 8 (subagent spec) -> Tag 2 (role string).
+function extractSubagentRole(hexRaw) {
+  if (!hexRaw || typeof hexRaw !== 'string') return '';
+  const buf = Buffer.from(hexRaw, 'hex');
+  let offset = 0;
+
+  function readVarint() {
+    let res = 0n;
+    let shift = 0n;
+    while (offset < buf.length) {
+      const b = buf[offset++];
+      res |= BigInt(b & 0x7f) << shift;
+      shift += 7n;
+      if ((b & 0x80) === 0) break;
+    }
+    return res;
+  }
+
+  function findTag(limit, targetTag) {
+    while (offset < limit) {
+      const tagWire = Number(readVarint());
+      const fNum = tagWire >> 3;
+      const wType = tagWire & 7;
+      if (wType === 0) {
+        readVarint();
+      } else if (wType === 2) {
+        const len = Number(readVarint());
+        const start = offset;
+        const end = offset + len;
+        if (fNum === targetTag) {
+          return { start, end, len };
+        }
+        offset = end;
+      } else if (wType === 1) {
+        offset += 8;
+      } else if (wType === 5) {
+        offset += 4;
+      } else {
+        break;
+      }
+    }
+    return null;
+  }
+
+  try {
+    const t17 = findTag(buf.length, 17);
+    if (!t17) return '';
+    offset = t17.start;
+    const t8 = findTag(t17.end, 8);
+    if (!t8) return '';
+    offset = t8.start;
+    const t2 = findTag(t8.end, 2);
+    if (!t2) return '';
+    return buf.subarray(t2.start, t2.end).toString('utf8').trim();
+  } catch {
+    return '';
+  }
+}
+
 // Returns a Map of conversationId -> { id, title, stepCount, lastModified, ... } from the global
 // conversation_summaries.db. Three possible outcomes:
 //   { <id>: ... }  → successful read
@@ -223,13 +283,28 @@ function conversationMatchesWorkspace(conv, currentFolderPaths) {
 function getConversationSummaries(summariesDb, sqliteBin) {
   if (!fs.existsSync(summariesDb)) return {};
   try {
-    const sql = `SELECT conversation_id, ifnull(title,'') AS title, ifnull(preview,'') AS preview, ifnull(step_count,0) AS step_count, ifnull(last_modified_time,'') AS last_modified_time, ifnull(workspace_uris,'') AS workspace_uris, ifnull(parent_conversation_id,'') AS parent_conversation_id, ifnull(nesting_depth,0) AS nesting_depth, ifnull(agent_name,'') AS agent_name, ifnull(killed,0) AS killed FROM conversation_summaries ORDER BY last_modified_time DESC;`;
+    const sql = `SELECT conversation_id, ifnull(title,'') AS title, ifnull(preview,'') AS preview, ifnull(step_count,0) AS step_count, ifnull(last_modified_time,'') AS last_modified_time, ifnull(workspace_uris,'') AS workspace_uris, ifnull(parent_conversation_id,'') AS parent_conversation_id, ifnull(nesting_depth,0) AS nesting_depth, ifnull(agent_name,'') AS agent_name, ifnull(killed,0) AS killed, HEX(raw_summary) AS hex_raw FROM conversation_summaries ORDER BY last_modified_time DESC;`;
     const out = execSync(`"${sqliteBin}" "${summariesDb}" -json "${sql}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
     const rows = JSON.parse(out);
     const map = {};
     for (const r of rows) {
       if (!r.conversation_id) continue;
-      const title = r.title || r.preview || 'Untitled Conversation';
+      const isSubagent = Boolean(r.parent_conversation_id || r.agent_name);
+      const subagentRole = (isSubagent && r.hex_raw) ? extractSubagentRole(r.hex_raw) : '';
+
+      let title = r.title ? r.title.trim() : '';
+      if (!title || title === 'Untitled Conversation' || title === '<original_task>') {
+        if (isSubagent && subagentRole) {
+          title = subagentRole;
+        } else if (r.preview && r.preview.trim() && r.preview !== '<original_task>') {
+          title = r.preview.trim();
+        } else if (isSubagent && r.agent_name) {
+          title = r.agent_name;
+        } else {
+          title = 'Untitled Conversation';
+        }
+      }
+
       const wsInfo = parseWorkspaceInfo(r.workspace_uris);
       map[r.conversation_id] = {
         id: r.conversation_id,
@@ -242,7 +317,8 @@ function getConversationSummaries(summariesDb, sqliteBin) {
         parentConversationId: r.parent_conversation_id,
         nestingDepth: Number(r.nesting_depth) || 0,
         agentName: r.agent_name,
-        isSubagent: Boolean(r.parent_conversation_id || r.agent_name),
+        agentRole: subagentRole,
+        isSubagent,
         killed: Boolean(r.killed)
       };
     }
@@ -256,7 +332,7 @@ function getConversationSummaries(summariesDb, sqliteBin) {
     // Fallback if -json is unsupported in ancient sqlite3 versions
     try {
       const sep = '---AGSEP---';
-      const sql = `SELECT conversation_id || '${sep}' || ifnull(title,'') || '${sep}' || ifnull(preview,'') || '${sep}' || ifnull(step_count,0) || '${sep}' || ifnull(last_modified_time,'') || '${sep}' || ifnull(workspace_uris,'') FROM conversation_summaries ORDER BY last_modified_time DESC;`;
+      const sql = `SELECT conversation_id || '${sep}' || replace(replace(ifnull(title,''),char(10),' '),char(13),'') || '${sep}' || replace(replace(ifnull(preview,''),char(10),' '),char(13),'') || '${sep}' || ifnull(step_count,0) || '${sep}' || ifnull(last_modified_time,'') || '${sep}' || ifnull(workspace_uris,'') || '${sep}' || ifnull(parent_conversation_id,'') || '${sep}' || ifnull(nesting_depth,0) || '${sep}' || ifnull(agent_name,'') || '${sep}' || ifnull(killed,0) || '${sep}' || ifnull(HEX(raw_summary),'') FROM conversation_summaries ORDER BY last_modified_time DESC;`;
       const out = execSync(`"${sqliteBin}" "${summariesDb}" "${sql}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
       const map = {};
       for (const line of out.split('\n')) {
@@ -265,18 +341,53 @@ function getConversationSummaries(summariesDb, sqliteBin) {
         const parts = clean.split(sep);
         if (parts.length < 2) continue;
         const id = parts[0];
-        const title = parts[1] || parts[2] || 'Untitled Conversation';
+        const rTitle = parts[1] || '';
+        const rPreview = parts[2] || '';
+        const stepCount = parseInt(parts[3], 10) || 0;
+        const lastModified = parts[4] || '';
         const wsRaw = parts[5] || '';
+        const parentConversationId = parts[6] || '';
+        const nestingDepth = parseInt(parts[7], 10) || 0;
+        const agentName = parts[8] || '';
+        const killed = Boolean(parseInt(parts[9], 10) || 0);
+        const hexRaw = parts[10] || '';
+
+        const isSubagent = Boolean(parentConversationId || agentName);
+        const subagentRole = (isSubagent && hexRaw) ? extractSubagentRole(hexRaw) : '';
+
+        let title = rTitle ? rTitle.trim() : '';
+        if (!title || title === 'Untitled Conversation' || title === '<original_task>') {
+          if (isSubagent && subagentRole) {
+            title = subagentRole;
+          } else if (rPreview && rPreview.trim() && rPreview !== '<original_task>') {
+            title = rPreview.trim();
+          } else if (isSubagent && agentName) {
+            title = agentName;
+          } else {
+            title = 'Untitled Conversation';
+          }
+        }
+
         const wsInfo = parseWorkspaceInfo(wsRaw);
         map[id] = {
           id,
           title,
-          stepCount: parseInt(parts[3], 10) || 0,
-          lastModified: parts[4] || '',
+          stepCount,
+          lastModified,
           workspaceUris: wsRaw,
           workspacePaths: wsInfo.workspacePaths,
-          workspaceName: wsInfo.workspaceName
+          workspaceName: wsInfo.workspaceName,
+          parentConversationId,
+          nestingDepth,
+          agentName,
+          agentRole: subagentRole,
+          isSubagent,
+          killed
         };
+      }
+      for (const id of Object.keys(map)) {
+        const parentId = map[id].parentConversationId;
+        if (parentId && map[parentId]) map[id].parentTitle = map[parentId].title;
       }
       return map;
     } catch {
@@ -938,6 +1049,7 @@ module.exports = {
   parseProto,
   validateConversationId,
   clearAnalysisCache,
-  recyclePaths
+  recyclePaths,
+  extractSubagentRole
 };
 

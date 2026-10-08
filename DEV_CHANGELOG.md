@@ -41,6 +41,7 @@ For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 - Subagent UI polish: descriptions truncated cleanly to 36 chars with hover tooltips, badges adjusted to prevent layout clipping, and table rows de-cluttered.
 - Responsive single-scroll layout: pinned header (`shrink-0`) and responsive list fill (`flex-1 min-h-0`), removing dual-scrollbars on Tab 2.
 - 1:1 timeline fidelity & proportional chart scaling: removed artificial decimation stride so every turn is preserved 1:1 (~70 KB per chat); scaled SVG chart X-axis strictly by turn progress (`pt.turn`), eliminating visual horizontal distortion between early and late compaction cycles.
+- Manual Refresh in Visual Dashboard: Added an on-demand `#refreshBtn` in the dashboard header with tactile feedback, spinning SVG sync animation, temporary "Updated" confirmation upon `telemetryUpdate`, and 3s fallback protection. Wired via `vscode.postMessage({ command: 'refresh' })` to trigger immediate telemetry reload.
 
 ---
 
