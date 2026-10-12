@@ -71,7 +71,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <img src="${iconUri}" class="w-8 h-8 rounded-lg object-contain shadow-sm shrink-0" alt="Antigravity Telemetry Logo" />
           ` : `
           <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-base border border-emerald-500/30 shrink-0">
-            ⚡
+            <svg class="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
           </div>
           `}
           <div>
@@ -86,8 +86,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
-          <!-- View Chip (Transient per-session filter) -->
-          <div class="flex items-center gap-1 p-0.5 inner-bg border border-color rounded-lg text-xs">
+          <!-- View Chip (Transient per-session filter, hidden when 0 subagents) -->
+          <div id="subagentChipGroup" class="${conversations.some(c => c.isSubagent) ? 'flex' : 'hidden'} items-center gap-1 p-0.5 inner-bg border border-color rounded-lg text-xs">
             <button id="chipAllBtn" class="px-2 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm text-[11px]">
               All (<span id="countAll">${conversations.length}</span>)
             </button>
@@ -102,12 +102,14 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <!-- Navigation Tabs -->
           <div class="flex items-center gap-1 p-1 inner-bg border border-color rounded-lg text-xs">
             <button id="tabDetailBtn"
-              class="px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm">
-              📊 Chat Telemetry
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              <span>Telemetry</span>
             </button>
             <button id="tabListBtn"
-              class="px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]">
-              🗂️ All Sessions (<span id="tabListCount">${conversations.length}</span>)
+              class="flex items-center gap-1.5 px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+              <span>Sessions (<span id="tabListCount">${conversations.length}</span>)</span>
             </button>
           </div>
 
@@ -151,9 +153,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <div>
             <div class="flex flex-wrap items-center gap-2 mb-1">
               <span id="chatBadge" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-blue-500/20 text-blue-400 border border-blue-500/30">gemini-3.8-flash</span>
-              <span id="subagentBadge" class="hidden px-2 py-0.5 rounded text-[10px] font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">🤖 <span id="chatAgentVal">subagent</span></span>
-              <span id="workspaceBadge" class="hidden px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">📁 <span id="chatWorkspaceVal">--</span></span>
-              <span id="activePill" class="hidden px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">ACTIVE CHAT</span>
+              <span id="sourceBadgeDetail" class="hidden inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shrink-0">IDE</span>
+              <span id="subagentBadge" class="hidden inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg><span id="chatAgentVal">subagent</span></span>
+              <span id="workspaceBadge" class="hidden inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-indigo-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg><span id="chatWorkspaceVal">--</span></span>
+              <span id="activePill" class="hidden px-1.5 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">ACTIVE</span>
               <span id="diskBadge" class="px-2 py-0.5 rounded text-[10px] font-medium inner-bg border border-color muted-color" title="Disk space used by this conversation (SQLite DB + Brain transcripts/artifacts + Annotations)">
                 Disk: <span id="chatDiskVal" class="text-zinc-300 font-semibold">0 MB</span>
               </span>
@@ -162,7 +165,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             <div class="flex items-center gap-2.5">
               <h2 id="chatTitle" class="text-sm font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">Loading...</h2>
               <button id="deleteChatBtn" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-red-500/15 hover:bg-red-500/25 text-red-400 hover:text-red-300 border border-red-500/30 transition-colors flex items-center gap-1 shadow-sm shrink-0" title="${delTooltip}">
-                🗑️ Delete Chat
+                <svg class="w-3 h-3 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                <span>Delete Chat</span>
               </button>
             </div>
             <p id="chatMeta" class="text-[11px] muted-color">ID: -- | Last Active: --</p>
@@ -201,12 +205,15 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         </div>
       </div>
 
-      <!-- 🤖 Subagents & Background Workers Card (Shown when selected chat has spawned children) -->
+      <!-- Subagents & Background Workers Card (Shown when selected chat has spawned children) -->
       <div id="subagentsCard" class="hidden p-3 card-bg border border-color rounded-xl space-y-2.5">
         <div id="subagentsToggleBtn" class="flex flex-wrap items-center justify-between gap-2 cursor-pointer select-none group" title="Click to minimize or expand subagents">
           <div class="flex items-center gap-2">
             <span id="subagentsChevron" class="text-[10px] text-zinc-400 group-hover:text-zinc-200 transition-transform duration-150">▼</span>
-            <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)] group-hover:text-blue-300 transition-colors">🤖 Subagents & Background Workers</h3>
+            <div class="flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-purple-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+              <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)] group-hover:text-blue-300 transition-colors">Subagents & Background Workers</h3>
+            </div>
             <span id="subagentsCountBadge" class="text-[10px] px-2 py-0.5 rounded inner-bg border border-color text-purple-300 font-semibold">0 subagents</span>
           </div>
           <div class="flex items-center gap-3">
@@ -323,7 +330,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
         <div class="flex items-center justify-between text-[10px] muted-color px-1">
           <span>Start (Turn 1)</span>
-          <span class="italic text-[9px]">💡 Hover over graph to inspect turn details</span>
+          <span class="text-[9px] muted-color">Hover over graph to inspect turn details</span>
           <span>Latest Turn</span>
         </div>
       </div>
@@ -340,7 +347,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <!-- Card 1: Last Turn Activity -->
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
             <div class="flex items-center justify-between text-[10px] muted-color">
-              <span>⚡ Last Turn Activity</span>
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                Last Turn
+              </span>
               <span id="metaLastTurnNum" class="font-semibold text-blue-400">Turn #--</span>
             </div>
             <div id="metaLastContext" class="text-sm font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</div>
@@ -362,7 +372,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
           <!-- Card 2: Per-Turn Averages -->
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="text-[10px] muted-color">📊 Per-Turn Averages</div>
+            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
+              <svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+              <span>Per-Turn Averages</span>
+            </div>
             <div id="metaAvgContext" class="text-sm font-bold text-amber-400">0 tok</div>
             <div class="text-[10px] space-y-0.5">
               <div class="flex justify-between">
@@ -382,7 +395,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
           <!-- Card 3: Cache Reliability & Ceiling -->
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="text-[10px] muted-color">🛡️ Cache Performance</div>
+            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
+              <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+              <span>Cache Performance</span>
+            </div>
             <div id="metaCacheCalls" class="text-sm font-bold text-blue-400">0 Hits</div>
             <div class="text-[10px] space-y-0.5">
               <div class="flex justify-between">
@@ -402,7 +418,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
           <!-- Card 4: Session Peaks -->
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="text-[10px] muted-color">🏔️ Session Peaks</div>
+            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
+              <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+              <span>Session Peaks</span>
+            </div>
             <div id="metaPeakContext" class="text-sm font-bold text-emerald-400">0 tok</div>
             <div class="text-[10px] space-y-0.5">
               <div class="flex justify-between">
@@ -448,15 +467,16 @@ function getDashboardHtml(conversations, activeId, options = {}) {
   <div id="deleteModal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
     <div class="card-bg border border-red-500/40 rounded-xl p-4 max-w-md w-full space-y-3 shadow-2xl">
       <div class="flex items-center gap-2 text-red-400 font-bold text-sm">
-        <span class="text-base">🗑️</span>
+        <svg class="w-4 h-4 text-red-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
         <span>${delHeading}</span>
       </div>
       <p class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)]">
         <strong id="delModalTitle" class="text-white"></strong>
       </p>
       <p class="text-[11px] muted-color">${delQuestion}</p>
-      <div id="delModalActiveWarning" class="hidden p-2 rounded bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-300">
-        ⚠️ This is the currently active chat in Antigravity. Deleting it will terminate this session.
+      <div id="delModalActiveWarning" class="hidden p-2 rounded bg-amber-500/15 border border-amber-500/30 text-[11px] text-amber-300 flex items-center gap-1.5">
+        <svg class="w-3.5 h-3.5 shrink-0 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>
+        <span>This is the currently active chat in Antigravity. Deleting it will terminate this session.</span>
       </div>
       <div class="text-[11px] muted-color space-y-1 p-2.5 inner-bg rounded-lg border border-color">
         <div class="text-[10px] uppercase font-bold text-red-400/90 mb-1">${delFilesNote}</div>
@@ -473,7 +493,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           Cancel
         </button>
         <button id="delModalConfirmBtn" class="px-3 py-1.5 rounded text-xs bg-red-600 hover:bg-red-500 text-white font-semibold transition-colors flex items-center gap-1.5 shadow-sm">
-          🗑️ ${delButtonLabel}
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+          <span>${delButtonLabel}</span>
         </button>
       </div>
     </div>
@@ -758,6 +779,20 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       if (elSubs) elSubs.textContent = subsCount;
       if (elTabCount) elTabCount.textContent = allCount;
 
+      const chipGroup = document.getElementById('subagentChipGroup');
+      if (chipGroup) {
+        if (subsCount > 0) {
+          chipGroup.classList.remove('hidden');
+          chipGroup.classList.add('flex');
+        } else {
+          chipGroup.classList.remove('flex');
+          chipGroup.classList.add('hidden');
+          if (currentSubagentFilter !== 'all') {
+            currentSubagentFilter = 'all';
+          }
+        }
+      }
+
       let gInput = 0, gCached = 0, gOutput = 0;
       let excludedInput = 0, excludedOutput = 0;
 
@@ -812,15 +847,15 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       if (tab === 'detail') {
         detailView.classList.remove('hidden');
         listView.classList.add('hidden');
-        detailBtn.className = 'px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm';
-        listBtn.className = 'px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]';
+        detailBtn.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm';
+        listBtn.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]';
         const conv = CONVERSATIONS.find(c => c.id === selectedId);
         if (conv && conv.stats) renderChart(conv.stats.contextTimeline);
       } else {
         detailView.classList.add('hidden');
         listView.classList.remove('hidden');
-        listBtn.className = 'px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm';
-        detailBtn.className = 'px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]';
+        listBtn.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded font-medium transition-colors bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-sm';
+        detailBtn.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded font-medium transition-colors muted-color hover:text-[var(--vscode-editor-foreground,#f4f4f5)]';
         filterList();
       }
     }
@@ -861,11 +896,11 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           if (display) {
             let tClean = display;
             if (tClean.length > 28) tClean = tClean.slice(0, 26).trim() + '…';
-            titleText = '🤖 [' + agent + '] ' + tClean;
-            fullTitle = '🤖 [' + agent + '] ' + display;
+            titleText = '[' + agent + '] ' + tClean;
+            fullTitle = '[' + agent + '] ' + display;
           } else {
-            titleText = '🤖 [' + agent + ']';
-            fullTitle = '🤖 [' + agent + ']';
+            titleText = '[' + agent + ']';
+            fullTitle = '[' + agent + ']';
           }
         } else {
           fullTitle = c.title || 'Untitled';
@@ -876,8 +911,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           titleText = t;
         }
 
-        opt.textContent = wsPrefix + titleText + isAct + ' · ' + tokM + ' (' + hit + ' cache)';
-        opt.title = (wsPrefix ? wsPrefix : '') + fullTitle + isAct + ' — ' + (c.storageMB ? c.storageMB + 'MB · ' : '') + tokM + ' tok (' + (c.stats ? c.stats.cacheHitRate : 0) + '% cache)';
+        const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
+        const srcPrefix = hasMultipleSources && c.source ? (c.source === 'ide' ? '[IDE] ' : '[Ext] ') : '';
+        opt.textContent = srcPrefix + wsPrefix + titleText + isAct + ' · ' + tokM + ' (' + hit + ' cache)';
+        opt.title = srcPrefix + (wsPrefix ? wsPrefix : '') + fullTitle + isAct + ' — ' + (c.storageMB ? c.storageMB + 'MB · ' : '') + tokM + ' tok (' + (c.stats ? c.stats.cacheHitRate : 0) + '% cache)';
         if (c.id === selectedId) opt.selected = true;
         select.appendChild(opt);
       });
@@ -888,7 +925,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           const agent = cur.agentName || 'subagent';
           const hasTask = cur.title && cur.title !== '<original_task>' && cur.title !== 'Untitled Conversation' && cur.title !== 'Untitled' && cur.title.trim() !== agent;
           const task = hasTask ? cur.title.trim() : (cur.agentRole ? cur.agentRole.trim() : '');
-          select.title = cur.isSubagent ? ('🤖 [' + agent + ']' + (task ? ' ' + task : '')) : (cur.title || 'Untitled');
+          select.title = cur.isSubagent ? ('[' + agent + ']' + (task ? ' ' + task : '')) : (cur.title || 'Untitled');
         }
       }
     }
@@ -917,7 +954,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         return;
       }
 
-      function createConvRow(c, isChild) {
+      function createConvRow(c) {
         const isSel = c.id === selectedId;
         const isAct = c.id === currentActiveId;
         const div = document.createElement('div');
@@ -933,7 +970,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         const storageMB = c.storageMB ? c.storageMB + ' MB' : '-- MB';
         const wsName = c.workspaceName || '';
         const wsBadge = wsName && currentWorkspaceFilter === 'all'
-          ? '<span class="text-[9px] font-medium px-1.5 py-0.2 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 shrink-0" title="Workspace: ' + escapeHtml(wsName) + '">📁 ' + escapeHtml(wsName) + '</span>'
+          ? '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 shrink-0" title="Workspace: ' + escapeHtml(wsName) + '"><svg class="w-2.5 h-2.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>' + escapeHtml(wsName) + '</span>'
+          : '';
+        const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
+        const sourceBadge = hasMultipleSources && c.source
+          ? (c.source === 'ide'
+              ? '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0" title="Source: Antigravity IDE"><svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>IDE</span>'
+              : '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0" title="Source: Antigravity Extension"><svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>Ext</span>')
           : '';
 
         let titleHtml = '';
@@ -949,7 +992,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             ? '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(cleanTitle) + '">' + escapeHtml(displayTitle) + '</span>'
             : '';
           titleHtml = 
-            '<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">🤖 ' + agentLabel + '</span>' +
+            '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + agentLabel + '</span>' +
             taskSpan;
         } else {
           titleHtml = '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(c.title || 'Untitled') + '">' + escapeHtml(c.title || 'Untitled') + '</span>';
@@ -960,11 +1003,12 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             '<div class="flex items-center gap-1.5 min-w-0 flex-1">' +
               titleHtml +
               wsBadge +
+              sourceBadge +
             '</div>' +
             '<div class="flex items-center gap-1.5 shrink-0">' +
               (isAct ? '<span class="text-[9px] font-bold px-1 rounded bg-emerald-500/20 text-emerald-400">ACTIVE</span>' : '') +
               '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ' + (hitRate > 90 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400') + '">' + hitRate + '%</span>' +
-              '<button class="del-btn p-1 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors text-xs" title="${delTooltip}">🗑️</button>' +
+              '<button class="del-btn p-1 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" title="${delTooltip}"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>' +
             '</div>' +
           '</div>' +
           '<div class="flex items-center justify-between text-[10px] muted-color">' +
@@ -1073,7 +1117,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           toggle.innerHTML = 
             '<div class="flex items-center gap-1.5 text-purple-300 font-medium">' +
               '<span class="drawer-arrow text-[11px]">' + (isExp ? '▾' : '▸') + '</span>' +
-              '<span>🤖</span>' +
+              '<span class="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/25 text-purple-300 border border-purple-500/30"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>subagents</span>' +
               '<span>' + children.length + ' subagent' + (children.length > 1 ? 's' : '') + '</span>' +
               '<span class="muted-color font-mono">· ' + formatTok(cTok) + ' tok · ' + cStorage + ' MB</span>' +
             '</div>' +
@@ -1120,7 +1164,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         unToggle.innerHTML = 
           '<div class="flex items-center gap-1.5 text-amber-300 font-medium">' +
             '<span class="unattached-arrow text-[11px]">' + (unattachedExpanded ? '▾' : '▸') + '</span>' +
-            '<span>🤖</span>' +
+            '<span class="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-amber-500/25 text-amber-300 border border-amber-500/30"><svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/></svg>orphan</span>' +
             '<span>Unattached Subagents (' + visibleUnattached.length + ')</span>' +
             '<span class="muted-color font-mono">· ' + formatTok(uTok) + ' tok · ' + uStorage + ' MB</span>' +
           '</div>' +
@@ -1298,7 +1342,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         document.getElementById('chatTitle').title = '';
       }
 
-      // 🤖 Subagents & Background Workers Card
+      // Subagents & Background Workers Card
       const children = CONVERSATIONS.filter(c => c.parentConversationId === conv.id);
       const subCard = document.getElementById('subagentsCard');
       const subList = document.getElementById('subagentsList');
@@ -1310,14 +1354,11 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         if (subCountBadge) subCountBadge.textContent = children.length + (children.length === 1 ? ' subagent' : ' subagents');
 
         let childTok = 0;
-        let childStorage = 0;
         if (subList) {
           subList.innerHTML = '';
           children.forEach(ch => {
             const cTok = ch.stats ? ch.stats.grandTotal : 0;
-            const cStorage = parseFloat(ch.storageMB) || 0;
             childTok += cTok;
-            childStorage += cStorage;
 
             const row = document.createElement('div');
             row.className = 'p-2 inner-bg border border-color rounded-lg flex items-center justify-between gap-2 hover:border-blue-500/40 cursor-pointer transition-colors';
@@ -1329,7 +1370,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             let displayTask = hasTask ? ch.title.trim() : (ch.agentRole ? ch.agentRole.trim() : (ch.agentName || ch.id.slice(0, 8)));
             if (displayTask.length > 36) displayTask = displayTask.slice(0, 34).trim() + '…';
             left.innerHTML = 
-              '<span class="px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0">🤖 ' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
+              '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
               '<span class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)] font-medium truncate" title="' + escapeHtml(ch.title || '') + '">' + escapeHtml(displayTask) + '</span>' +
               '<span class="text-[10px] muted-color font-mono shrink-0">(' + escapeHtml(ch.id.slice(0, 8)) + ')</span>';
 
@@ -1367,6 +1408,24 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         document.getElementById('activePill').classList.remove('hidden');
       } else {
         document.getElementById('activePill').classList.add('hidden');
+      }
+
+      const srcBadge = document.getElementById('sourceBadgeDetail');
+      const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
+      if (srcBadge) {
+        if (hasMultipleSources && conv.source) {
+          srcBadge.classList.remove('hidden');
+          const isIde = conv.source === 'ide';
+          const icon = isIde
+            ? '<svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>'
+            : '<svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>';
+          srcBadge.innerHTML = icon + '<span>' + (isIde ? 'IDE' : 'Ext') + '</span>';
+          srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ' + 
+            (isIde ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30');
+          srcBadge.title = isIde ? 'Source: Antigravity IDE' : 'Source: Antigravity Extension';
+        } else {
+          srcBadge.classList.add('hidden');
+        }
       }
 
       const wsBadge = document.getElementById('workspaceBadge');
@@ -1495,16 +1554,37 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
     }
 
-    function renderChart(timeline) {
+    let lastRenderedChartId = null;
+    let lastRenderedTimelineLen = 0;
+    let lastRenderedLastInput = null;
+
+    function renderChart(timeline, forceRedraw = false) {
       const svg = document.getElementById('timelineSvg');
-      svg.innerHTML = '';
+      if (!timeline || timeline.length === 0) {
+        svg.innerHTML = '';
+        const tooltip = document.getElementById('chartTooltip');
+        if (tooltip) tooltip.classList.add('hidden');
+        document.getElementById('chartPointsCount').textContent = '0 points';
+        lastRenderedChartId = null;
+        lastRenderedTimelineLen = 0;
+        lastRenderedLastInput = null;
+        return;
+      }
+
+      const lastPoint = timeline[timeline.length - 1];
+      const lastInput = lastPoint ? lastPoint.input : null;
+      if (!forceRedraw && lastRenderedChartId === selectedId && lastRenderedTimelineLen === timeline.length && lastRenderedLastInput === lastInput) {
+        // Timeline has not changed; skip clearing SVG to prevent tooltip and tracker fluctuation
+        return;
+      }
+      lastRenderedChartId = selectedId;
+      lastRenderedTimelineLen = timeline.length;
+      lastRenderedLastInput = lastInput;
+
+      if (svg) svg.innerHTML = '';
       const tooltip = document.getElementById('chartTooltip');
       if (tooltip) tooltip.classList.add('hidden');
 
-      if (!timeline || timeline.length === 0) {
-        document.getElementById('chartPointsCount').textContent = '0 points';
-        return;
-      }
       document.getElementById('chartPointsCount').textContent = timeline.length + ' data points';
 
       const w = svg.clientWidth || 500;
@@ -1783,7 +1863,15 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         };
       }
       const search = document.getElementById('searchInput');
-      if (search) search.oninput = () => filterList();
+      if (search) {
+        search.oninput = () => filterList();
+        search.onkeydown = e => {
+          if (e.key === 'Escape') {
+            search.value = '';
+            filterList();
+          }
+        };
+      }
     }
 
     bindEvents();
@@ -1794,7 +1882,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     renderDetail();
     window.onresize = () => {
       const conv = CONVERSATIONS.find(c => c.id === selectedId);
-      if (conv && conv.stats) renderChart(conv.stats.contextTimeline);
+      if (conv && conv.stats) renderChart(conv.stats.contextTimeline, true);
     };
   </script>
 </body>

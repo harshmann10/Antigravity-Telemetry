@@ -1,215 +1,240 @@
-# <img src="./media/icon.png" width="36" height="36" align="center" alt="Antigravity Telemetry Logo" /> Antigravity Telemetry - Context & Token Monitor (VS Code Extension)
+<p align="center">
+  <img src="./media/icon.png" width="92" height="92" alt="Antigravity Telemetry Logo" />
+</p>
 
-[![Visual Studio Marketplace Version](https://img.shields.io/visual-studio-marketplace/v/HarshMann.antigravity-telemetry?color=blue&style=flat-square&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
-[![Visual Studio Marketplace Installs](https://img.shields.io/visual-studio-marketplace/i/HarshMann.antigravity-telemetry?color=emerald&style=flat-square&label=installs)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
-[![Visual Studio Marketplace Rating](https://img.shields.io/visual-studio-marketplace/r/HarshMann.antigravity-telemetry?color=yellow&style=flat-square&label=rating)](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
-[![GitHub Release](https://img.shields.io/github/v/release/harshmann10/Antigravity-Telemetry?color=3b82f6&style=flat-square)](https://github.com/harshmann10/Antigravity-Telemetry/releases/latest)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen?style=flat-square)](https://github.com/harshmann10/Antigravity-Telemetry/blob/main/package.json)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+<h1 align="center">Antigravity Telemetry</h1>
 
-A lightweight, zero-token, real-time LLM telemetry monitor, visual observability dashboard, and storage management extension for Google Antigravity inside VS Code.
+<p align="center">
+  <strong>Real-time LLM telemetry monitor, visual observability dashboard, and storage hygiene for Google Antigravity.</strong><br>
+  Built for <strong>VS Code</strong>, <strong>VSCodium</strong>, <strong>Cursor</strong>, <strong>Windsurf</strong>, and the standalone <strong>Antigravity IDE</strong>.
+</p>
 
-![Antigravity Telemetry Visual Dashboard](./media/dashboard-preview.png)
+<p align="center">
+  <a href="https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry"><img src="https://vsmarketplacebadges.dev/version-short/HarshMann.antigravity-telemetry.svg?style=flat-square" alt="Visual Studio Marketplace Version" /></a>
+  <a href="https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry"><img src="https://vsmarketplacebadges.dev/installs-short/HarshMann.antigravity-telemetry.svg?style=flat-square" alt="Visual Studio Marketplace Installs" /></a>
+  <a href="https://open-vsx.org/extension/HarshMann/antigravity-telemetry"><img src="https://img.shields.io/open-vsx/v/HarshMann/antigravity-telemetry?color=purple&style=flat-square&label=Open%20VSX" alt="Open VSX Version" /></a>
+  <a href="https://open-vsx.org/extension/HarshMann/antigravity-telemetry"><img src="https://img.shields.io/open-vsx/dt/HarshMann/antigravity-telemetry?color=purple&style=flat-square&label=downloads" alt="Open VSX Downloads" /></a>
+  <a href="https://github.com/harshmann10/Antigravity-Telemetry/releases/latest"><img src="https://img.shields.io/github/v/release/harshmann10/Antigravity-Telemetry?color=3b82f6&style=flat-square" alt="GitHub Release" /></a>
+  <a href="https://github.com/harshmann10/Antigravity-Telemetry"><img src="https://img.shields.io/github/stars/harshmann10/Antigravity-Telemetry?style=flat-square&color=blue" alt="GitHub Stars" /></a>
+  <a href="https://github.com/harshmann10/Antigravity-Telemetry/blob/main/package.json"><img src="https://img.shields.io/badge/dependencies-zero-brightgreen?style=flat-square" alt="Zero Dependencies" /></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License: MIT" /></a>
+</p>
 
----
+<p align="center">
+  <a href="#-why-antigravity-telemetry">Why Telemetry?</a> &nbsp;•&nbsp;
+  <a href="#-features">Features</a> &nbsp;•&nbsp;
+  <a href="#%EF%B8%8F-command-palette-reference">Commands</a> &nbsp;•&nbsp;
+  <a href="#%EF%B8%8F-settings">Settings</a> &nbsp;•&nbsp;
+  <a href="#-installation">Installation</a> &nbsp;•&nbsp;
+  <a href="#-compatibility--prerequisites">Compatibility</a>
+</p>
 
-## Features
-
-### 1. ⚡ Footer Status Bar Item
-
-- **Live Active Chat Monitoring**: Displays active chat title, context window fill %, and prompt cache hit rate in clean native styling:
-  `[Chat Title] | 182k (71%) · 98.4% cache`
-- **Compaction Ceiling Calibration**: Calibrated against Antigravity's **256,000 token working ceiling** (so 182k shows 71% full, giving you an honest indicator of session weight before compaction triggers; falls back to 255k for legacy chats).
-- **Auto-Compaction Alerts**: Automatically detects when Antigravity compacts context and displays a compaction notice:
-  `[Chat Title] | Compacted (-71k) · 98.4%`
-- **Markdown Hover Card**: Hovering over the footer displays a full breakdown with a 12-segment ASCII window meter, cache volume, and thinking tokens.
-
----
-
-### 2. 📋 Two-Level QuickPick Menu
-
-Clicking the status bar item opens a quick command menu:
-
-- **Active Chat Summary**: Shows context, cache read/write, and output tokens.
-- **📈 Open Full Visual Dashboard**: Opens the rich editor tab dashboard.
-- **🗂️ Browse Past Conversations**: Searchable sub-picker displaying all previous sessions with token counts and on-disk storage sizes.
-- **🗑️ Delete a Conversation (Free Disk Space)**: Pick any conversation to remove it (Recycle Bin by default).
-- **🔄 Refresh Telemetry**: Immediate re-scan of local databases.
-- **⚙️ Set sqlite3 Path**: Only shown when the `sqlite3` CLI could not be found — see **§7 Failure Visibility** below.
-
-The menu is **scoped to your current workspace** by default, so chats from other projects do not
-drown out the one you are working in (see **§5 Workspace Scoping**).
+<p align="center">
+  <img src="./media/dashboard-preview.png" alt="Antigravity Telemetry Visual Dashboard" width="100%" />
+</p>
 
 ---
 
-### 3. 📈 Live Visual Observability Dashboard (Editor Tab)
+## ⚡ Why Antigravity Telemetry?
 
-Opens side-by-side with your code (`Ctrl + W` to close anytime) and updates live via `postMessage`:
+| The Problem | How Antigravity Telemetry Solves It |
+| :--- | :--- |
+| **Context Window Blindness**<br>Antigravity doesn't natively show how close you are to the working ceiling until compaction triggers and abruptly cuts session history. | **Live Status Bar & Ceiling Calibration**<br>Calibrated to Antigravity's **256,000 token ceiling** with live fill %, proactive compaction warnings, and dual-layer interactive SVG timelines. |
+| **"Ghost Chats" & Disk Bloat**<br>Antigravity's built-in chat deletion often only removes the catalog record, leaving 20 MB–80 MB+ of SQLite DBs, transcripts, and media files orphaned on disk. | **Complete Zero-Residue Deletion**<br>Wipes all 7 storage layers completely with **Windows Recycle Bin protection by default** for safe, recoverable cleanup. |
+| **Black-Box Subagents**<br>Autonomous background workers (`browser`, `DeepInvestigator`) clutter chat lists with cryptic *"Untitled Conversation"* entries. | **Specialized Role Decoding & Hierarchy**<br>Decodes protobuf task records into genuine role titles (e.g. `Icon Designer`, `Research Assistant`) with nested drawers and parent-child cost rollups. |
+| **Dual Environment Fragmentation**<br>Users work across both standalone Antigravity IDE and VS Code extension environments with separate data stores. | **Host-Aware Auto-Detection**<br>Automatically loads the active editor's data (`~/.gemini/antigravity-ide` vs `~/.gemini/antigravity`) with unified both-mode merged views. |
+| **Zero Overhead & Total Privacy**<br>Most observability tools query third-party APIs or consume model tokens. | **100% Offline & Free**<br>Pure local SQLite and protobuf wire decoding. Zero external npm dependencies, zero network requests, zero API tokens consumed. |
 
-- **Split-Window Optimized**: Active KPIs and context timeline sit directly at the top with zero scrolling required in narrow split editor views.
-- **4 Top KPIs**: Context Window (fill % & headroom against the real ceiling), Cache Read (cached tokens & hit %), Uncached Input (fresh prompt tokens), and Model Output (generated tokens & thinking ratio).
-- **Scope Controls**: A workspace dropdown switches between your current project, all workspaces, or any individual workspace, and a view chip switches between `All · Chats · Subagents`. Both are transient, so the view always tells you what you are looking at.
-- **Dual-Layer Interactive Timeline (SVG)**:
-  - **Blue curve**: Total Context progression across all turns, read from Antigravity's own trajectory context counter.
-  - **Emerald curve**: Cached Prompt Volume per turn, visually exposing the thin sliver of fresh tokens added per turn. It is clamped to the context curve so it can never render above it, even when the API-side prompt cache holds a prefix Antigravity has already pruned.
-  - **Red dashed guideline**: Drawn at the conversation's real compaction ceiling, with marker dots on compaction turns.
-  - **Mouse Tracking Crosshairs & Hover Tooltip**: Moving your cursor over the chart displays turn details, context %, cached volume, fresh additions, and generation output.
+---
+
+## ✨ Features
+
+### 1. 📊 Live Context & Token Intelligence
+
+- **Status Bar Item**: Real-time display showing active chat title, context tokens, fill %, and prompt cache hit rate:
+  ```text
+  [Chat Title] | 182k (71%) · 98.4% cache
+  ```
+- **Compaction Ceiling Calibration**: Measured against Antigravity's true **256,000 token working ceiling** (so 182k displays 71% full, giving an honest indicator of working memory before compaction occurs).
+- **Proactive Compaction Notices**: Automatically detects context reduction events and alerts you:
+  ```text
+  [Chat Title] | Compacted (-71k) · 98.4%
+  ```
+- **Markdown Hover Card**: Hovering over the status bar item reveals a rich breakdown with a 12-segment ASCII window meter (`[████████░░░░]`), cache volume breakdown, and reasoning tokens.
+
+---
+
+### 2. 📈 Visual Observability Dashboard (Editor Tab)
+
+Opens side-by-side with your code (`Ctrl + Shift + P` $\rightarrow$ `Antigravity: Open Full Visual Dashboard`) and updates in real-time:
+
+- **Split-Window Optimized**: Pinned header and top KPI cards sit comfortably without scrolling even in narrow side-by-side editor splits.
+- **Top 4 KPIs**:
+  - **Context Window**: Current tokens, fill %, and remaining headroom.
+  - **Cache Read**: Total cached prompt tokens and cache hit percentage.
+  - **Uncached Input**: Fresh prompt additions per turn.
+  - **Model Output**: Total generated tokens and thinking ratio.
+- **Dual-Layer SVG Context Timeline**:
+  - **Blue Curve**: Total context progression across every turn read from Antigravity's trajectory counter.
+  - **Emerald Area**: Cached prompt volume per turn, clamped cleanly to the context curve.
+  - **Red Guideline**: Visual ceiling line with marker dots on genuine compaction turns.
+  - **Intelligent Compaction Qualification**: Automatically filters out transient single-turn planner V-dips (intermediate steps where tool outputs are temporarily pruned before resuming full context), ensuring only authentic session compactions increment counters.
+  - **Interactive Crosshairs & Hover Tooltip**: Track precise turn numbers, context %, cached volume, fresh additions, and generation output.
+  - **Anti-Flicker Memoization**: Skips redundant SVG re-renders during background polling so chart tooltips never jump or dismiss while hovering.
 - **Session Intelligence Grid**:
   - **⚡ Last Turn Activity**: Delta fresh tokens added, output, and compaction state.
   - **📊 Per-Turn Averages**: Average context, output, thinking tokens, and cache volume.
   - **🛡️ Cache Performance**: Total hits vs. calls, cold start misses, and compaction count.
-  - **🏔️ Session Peaks**: Peak context reached (% of the ceiling), peak generation, and peak reasoning tokens.
-- **🔄 On-Demand Manual Refresh**: Click the header refresh button anytime for an immediate reload with spinning tactile feedback and live update confirmation.
+  - **🏔️ Session Peaks**: Peak context reached (% of ceiling), peak generation, and peak reasoning tokens.
+- **🔄 On-Demand Manual Refresh**: Click the header refresh button anytime for immediate synchronization with tactile press feedback and live status confirmation.
 
 ---
 
-### 4. 🗑️ Complete Zero-Residue Conversation Deletion
+### 3. 🤖 Autonomous Subagent & Background Worker Organization
 
-Antigravity's built-in chat deletion often only deletes the catalog record while leaving massive SQLite databases and `brain/` folders (transcripts, images, artifacts) lingering on disk, accumulating hundreds of megabytes of dead "ghost" data.
+Antigravity spawns background workers (`browser`, `firefox_browser`, `DeepInvestigator…`) that write their own conversation records. Antigravity Telemetry neatly organizes them:
 
-**Antigravity Telemetry completely solves this**:
+- **Specialized Role Decoding**: Decodes internal protobuf task records (`Tag 17 → Tag 8 → Tag 2`) across both JSON and delimiter catalog fallback paths to extract genuine subagent task roles (e.g., `Icon Designer`, `Research Assistant`), eliminating generic "Untitled Conversation" labels.
+- **Nested Collapsible Drawers**: Sessions with subagents display expandable drawers (`▾ 🤖 3 subagents · 165.0k tok · 0.6 MB`) that tuck away clutter while keeping child telemetry accessible in one click.
+- **Rolled-Up Cost Accounting**: Selecting a parent conversation provides a *Subagents & Background Workers* card with exact breakdown (`Parent + Subagents = Total`).
+- **Collapsible Breakdown Card**: Interactive toggle (`▼ Collapse` / `▶ Expand`) with smooth scrolling for sessions with multiple background workers.
+- **Breadcrumb Navigation**: Subagents feature one-click breadcrumb links back to their parent session.
+- **Human Chats Drive the Footer**: Background workers finishing later cannot accidentally hijack your status bar active chat.
 
-- **Wipes All Storage Layers**:
+---
+
+### 4. 🗑️ Zero-Residue Storage Hygiene & Ghost Chat Deletion
+
+Antigravity's native delete action often removes only the catalog record while leaving dozens of megabytes of orphaned SQLite databases and `brain/` transcripts on disk.
+
+Antigravity Telemetry provides true, verified cleanup:
+
+- **Wipes All 7 Storage Layers**:
   - `conversations/<id>.db`, `.db-wal`, `.db-shm`
   - `brain/<id>/` folder (transcripts, media, scratch files)
   - `annotations/<id>.pbtxt`
   - `browser_recordings/<id>/`
   - `implicit/<id>.pb`
-  - Row in `conversation_summaries.db`
-- **Recycle Bin by default**: files are moved to the Windows Recycle Bin instead of being shredded, so an accidental delete is recoverable. Set `antigravity.deleteToRecycleBin` to `false` for permanent deletion.
-- **Honest reporting**: every path is verified gone _after_ the delete. If Windows refuses (file locked by Antigravity), the extension says so, logs the exact paths (`Antigravity: Show Logs`) and **keeps the catalog row** — so a failed delete never turns a healthy chat into a new ghost.
-- **In-Dashboard Deletion**:
-  - Click **`🗑️ Delete Chat`** directly from the Active Chat card or the trash icon next to any chat in the **All Sessions** list.
-  - An in-dashboard confirmation modal lists what will be removed and how much space is involved.
+  - Catalog row in `conversation_summaries.db`
+- **Recycle Bin by Default**: Files are moved to the Windows Recycle Bin instead of being permanently shredded, making accidental deletions recoverable. Set `antigravity.deleteToRecycleBin: false` for permanent deletion.
+- **Honest Post-Delete Verification**: Every file path is verified gone *after* deletion. If a file is locked by a running process, the catalog entry is preserved to avoid creating half-deleted ghost chats, and locked paths are surfaced in logs.
+- **In-Dashboard & QuickPick Deletion**: Delete chats with a detailed confirmation modal displaying the exact files and megabytes being freed.
 
 ---
 
-### 5. 🗂️ Workspace Scoping
+### 5. 🛸 Dual Support for Antigravity IDE & VS Code Extension
 
-Antigravity stores every chat in one flat catalog, so `g:\job` work and `g:\web dev` work look
-identical in a session list. This extension resolves each conversation's `workspace_uris` to a real
-path and scopes the UI to the project you actually have open:
-
-- The **footer, history picker and delete picker** show only the current project by default.
-- The **active chat** is chosen from that visible set, so a chat from another project cannot hijack the status bar.
-- Set `antigravity.workspaceFilter` to `"all"` to see everything, or switch scope from the dashboard dropdown without changing the setting.
-- Matching is by **path prefix**, case-insensitively, so opening a subfolder of a project still finds its chats — and a project named `web` does not accidentally match `web dev`.
+- **Host-Aware Discovery**: Automatically detects whether you are working in the standalone **Antigravity IDE** (`~/.gemini/antigravity-ide`) or **VS Code / VSCodium** (`~/.gemini/antigravity`), loading the corresponding sessions with zero configuration.
+- **Unified Both Mode**: Set `antigravity.dataSource: "both"` anytime to view sessions from both environments merged side-by-side with clear `IDE` vs `Ext` visual badges and timestamp deduplication.
+- **Antigravity IDE Catalog Integration (`state.vscdb`)**: Decodes session summaries directly from Antigravity IDE's state database (`%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`), resolving titles, step counts, timestamps, and workspace mappings.
+- **In-DB Self-Description Fallback**: In-flight or newly opened sessions in Antigravity IDE are automatically self-described using internal `trajectory_metadata_blob` and `steps` tables, ensuring live sessions are recognized immediately and never falsely marked as ghost chats.
+- **Workspace Scoping**: Automatically resolves each conversation's `workspace_uris` to real paths and scopes the status bar, history picker, and dashboard to your currently active project folder (supports case-insensitive path prefix matching).
+- **Instant Startup & Caching**: Serializes analysis state to VS Code's `globalState` on reload. Warm restart reads take **~50 ms** (~98% faster than cold scanning), and periodic heartbeats run in **~6 ms**.
 
 ---
 
-### 6. 🤖 Subagent & Background-Worker Organization
+## ⌨️ Command Palette Reference
 
-Antigravity spawns background workers (`browser`, `firefox_browser`, `DeepInvestigator…`) that
-write their own conversation records. They are **nested, never hidden** — one click always reveals them:
+All features can be triggered from the Command Palette (`Ctrl + Shift + P` / `Cmd + Shift + P`):
 
-- **Collapsed drawers**: a chat that spawned workers shows `▾ 🤖 3 subagents · 165.0k tok · 0.6 MB`; expanding reveals each child with its agent badge, tokens, storage and delete button.
-- **Rolled-up accounting**: selecting a parent shows a _Subagents & Background Workers_ card listing each child plus `Parent + Subagents = Total`, so a session's true cost is never understated.
-- **Breadcrumb**: selecting a subagent links back to its parent — and degrades gracefully (name only, or "no longer available") when the parent has no local data.
-- **Unattached group**: children whose parent is not on disk appear in their own collapsed group rather than disappearing.
-- **Role & Task Decoding**: Decodes protobuf task records so subagents display their genuine specialized roles (e.g. `Icon Designer`, `Research Assistant`) instead of generic "Untitled Conversation" labels.
-- **Collapsible Breakdown Card**: The Subagents & Background Workers card in the detail view features an interactive expand/collapse toggle with smooth scrolling for sessions with multiple workers.
-- **Human chats drive the footer**: a background worker finishing later cannot take over the status bar.
-
----
-
-### 7. ⚠️ Failure Visibility
-
-If something the extension depends on is missing, it says so instead of silently showing nothing:
-
-- **`sqlite3` not found** → the footer shows `$(error) Antigravity: sqlite3 missing` with an error background, and clicking it (or the toast's **Set Path** action) lets you point at the executable via `antigravity.sqlitePath`. The warning fires once and re-arms itself if the CLI disappears again later.
-- **Catalog unreadable** → chat titles are unavailable and fallback titles are used, rather than failing or misidentifying conversations.
-- **A file locked by Antigravity during deletion** → the failure is reported with the exact paths (`Antigravity: Show Logs`) and the catalog entry is kept, so a failed delete never leaves a half-deleted chat.
+| Command | Title | Description |
+| :--- | :--- | :--- |
+| `antigravity.openDashboard` | **Antigravity: Open Full Visual Dashboard** | Opens the live side-by-side visual observability editor tab |
+| `antigravity.showMenu` | **Antigravity: Telemetry Menu** | Opens the two-level QuickPick menu from the status bar |
+| `antigravity.refresh` | **Antigravity: Refresh Telemetry** | Forces an immediate on-demand re-scan of local databases |
+| `antigravity.deleteConversation` | **Antigravity: Delete a Conversation** | Prompts a safe session picker to delete files and free disk space |
+| `antigravity.showLogs` | **Antigravity: Show Logs** | Opens the Antigravity Telemetry OutputChannel |
 
 ---
 
-### 8. 🔒 Zero Tokens, Zero Network, Pure Local Parsing
+## ⚙️ Settings
 
-- Queries local SQLite databases directly from `%USERPROFILE%\.gemini\antigravity\`. Catalog queries use SQLite's native `-json` mode to guarantee reliable title resolution without delimiter collisions or Windows CLI caret translation bugs.
-- Pure JavaScript Protobuf wire decoder (`readVarint`), with guards against malformed/over-large varints.
-- **Zero npm dependencies, zero network requests, zero API tokens consumed** — including the dashboard styling, which is a committed local stylesheet (`media/dashboard.css`) rather than a CDN script.
+Customize behavior in VS Code Settings (`Ctrl + ,` $\rightarrow$ search `Antigravity`):
 
----
-
-### 9. ⚡ Incremental Telemetry Cache
-
-A full scan used to re-query every conversation's `gen_metadata` table and re-walk the whole `brain/` tree on every refresh (~2-3 s, every 10 s). Now:
-
-- Each conversation is cached by `(mtimeMs, size)` (+ the WAL signature when Antigravity holds a DB open), so unchanged chats cost **zero** `sqlite3` spawns.
-- Changed chats are read incrementally (`WHERE idx > lastIdx`), with a structural guard (`count(*)` / `max(idx)`) that forces a clean re-read if rows were deleted or the table was rewritten.
-- On-disk storage sizes are cached with a TTL, since walking 2,400+ `brain/` files is the most expensive part of a scan.
-- Measured on a real 21-conversation install: **~2,000 ms cold → ~30 ms warm**.
-- The file watcher covers `.db`/`-wal`/`-shm` plus the `conversation_summaries.db` catalog, and polling pauses while the window is unfocused.
-
----
-
-## Settings
-
-| Setting                          | Default     | Description                                                                              |
-| :------------------------------- | :---------- | :--------------------------------------------------------------------------------------- |
-| `antigravity.deleteToRecycleBin` | `true`      | Move conversation files to the Windows Recycle Bin instead of deleting them permanently. |
-| `antigravity.workspaceFilter`    | `"current"` | Filter telemetry to the active workspace project (`"current"`) or show all (`"all"`).    |
-| `antigravity.sqlitePath`         | `""`        | Custom path to `sqlite3` CLI executable. When empty, searches standard paths and PATH.   |
+| Setting | Default | Description |
+| :--- | :--- | :--- |
+| `antigravity.dataSource` | `"auto"` | Data source: `"auto"` (active editor), `"ide"`, `"extension"`, or `"both"`. |
+| `antigravity.deleteToRecycleBin` | `true` | Move conversation files to the Windows Recycle Bin instead of deleting them permanently. |
+| `antigravity.workspaceFilter` | `"current"` | Filter telemetry to the active workspace project (`"current"`) or show all (`"all"`). |
+| `antigravity.sqlitePath` | `""` | Custom path to `sqlite3` CLI executable. When empty, searches standard paths and PATH automatically. |
 
 ---
 
 ## 📥 Installation
 
-### Option 1: From VS Code Marketplace (Recommended)
-
-Install directly from the official **[Visual Studio Code Marketplace](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)**:
-
-1. Open VS Code and open the Extensions sidebar (`Ctrl+Shift+X` / `Cmd+Shift+X`).
+### Option 1: Visual Studio Code Marketplace (Recommended)
+Install directly from the official **[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)**:
+1. Open VS Code $\rightarrow$ Extensions (`Ctrl + Shift + X` / `Cmd + Shift + X`).
 2. Search for **`Antigravity Telemetry`** (Publisher: **HarshMann**).
 3. Click **Install**.
 
-*Or install instantly from your terminal:*
+*Or install via terminal:*
 ```bash
 code --install-extension HarshMann.antigravity-telemetry
 ```
 
 ---
 
-### Option 2: Standalone VSIX Package
-
-1. Download the latest `.vsix` from [GitHub Releases](https://github.com/harshmann10/Antigravity-Telemetry/releases/latest).
-2. Open VS Code $\rightarrow$ Extensions (`Ctrl+Shift+X`) $\rightarrow$ click **`...`** (Views and More Actions) at the top-right $\rightarrow$ **Install from VSIX...**.
-3. Select the downloaded `antigravity-telemetry-1.0.0.vsix`.
+### Option 2: Open VSX Registry (VSCodium, Gitpod, Code-OSS)
+Install directly from the **[Open VSX Registry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry)**:
+1. Open your editor $\rightarrow$ Extensions (`Ctrl + Shift + X`).
+2. Search for **`Antigravity Telemetry`** (Publisher: **HarshMann**).
+3. Click **Install**.
 
 *Or install via terminal:*
 ```bash
-code --install-extension antigravity-telemetry-1.0.0.vsix
+codium --install-extension HarshMann.antigravity-telemetry
+# or via ovsx CLI
+npx ovsx get HarshMann.antigravity-telemetry
 ```
 
-> **Prerequisites:**
-> - Must have Google Antigravity installed (telemetry is read directly from your local `~/.gemini/antigravity` folder).
-> - Must have the `sqlite3` CLI available (built-in on macOS/Linux; auto-detected on Windows or configurable via `antigravity.sqlitePath`).
+---
+
+### Option 3: Standalone VSIX Package
+1. Download the latest `.vsix` from [GitHub Releases](https://github.com/harshmann10/Antigravity-Telemetry/releases/latest).
+2. Open VS Code $\rightarrow$ Extensions (`Ctrl + Shift + X`) $\rightarrow$ click **`...`** (Views and More Actions) at top-right $\rightarrow$ **Install from VSIX...**.
+3. Select the downloaded `antigravity-telemetry-1.1.0.vsix`.
+
+*Or install via terminal:*
+```bash
+code --install-extension antigravity-telemetry-1.1.0.vsix
+```
+
+---
+
+## 📋 Compatibility & Prerequisites
+
+- **Supported Environments**: VS Code, VS Code Insiders, VSCodium, Cursor, Windsurf, Gitpod, and standalone Antigravity IDE.
+- **Operating Systems**: Windows, macOS, and Linux.
+- **Prerequisites**:
+  - Google Antigravity installed (telemetry is auto-detected from `~/.gemini/antigravity-ide` and/or `~/.gemini/antigravity`).
+  - `sqlite3` CLI executable (pre-installed on macOS/Linux; auto-detected on Windows or configurable via `antigravity.sqlitePath`).
 
 ---
 
 ## 🛠️ Development & Contributing
 
 ### Running Verification Tests
-
-A dependency-free test suite verifies protobuf decoding, math calculations, incremental cache parity, and changelog parsing:
-
+A zero-dependency test suite verifies protobuf decoding, math calculations, incremental cache parity, and changelog parsing:
 ```bash
 node scripts/self-check.js
 ```
-
-Runs **128 assertions across 13 sections** in < 2 seconds without external test frameworks.
+*Runs **177 assertions across 13 sections** in < 2 seconds without external test frameworks.*
 
 ### Rebuilding Dashboard Stylesheet
-
-`media/dashboard.css` is pre-compiled and committed to ensure zero runtime dependencies. If you modify Tailwind classes in `dashboardHtml.js`, re-build it:
-
+`media/dashboard.css` is pre-compiled and committed to guarantee zero runtime dependencies. If you modify Tailwind classes in `dashboardHtml.js`, re-build it:
 ```bash
 npm run build:css
 ```
 
 ### Packaging .vsix
-
-Generate a fresh, production-ready `.vsix` package:
-
+Generate a production-ready `.vsix` package:
 ```bash
 npm run package
 ```
+
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).

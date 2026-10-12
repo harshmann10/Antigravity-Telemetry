@@ -53,26 +53,34 @@ G:\web dev\antigravity-telemetry\
 **Operational facts:**
 
 - **Refresh loop**: 10 s heartbeat that **skips while the window is unfocused** and refreshes on focus regain; guarded by `isRefreshing` so watcher + timer + manual refresh cannot stack.
-- **Watchers**: `conversations/` filtered to the `.db` family (incl. `-wal`/`-shm`/`-journal`), debounced 400 ms; plus the antigravity root filtered to `conversation_summaries.db`, debounced 600 ms.
+- **Watchers**: `conversations/` across all detected installation roots (filtered to `.db` family incl. `-wal`/`-shm`/`-journal`), debounced 400 ms; `conversation_summaries.db`, debounced 600 ms; plus Antigravity IDE's `state.vscdb` in `globalStorage`, debounced 800 ms.
 - **Logging**: `log()` writes to the `Antigravity Telemetry` OutputChannel (`antigravity.showLogs`), never `console`.
-- **Settings** (`getConfig()`): `deleteToRecycleBin`, `workspaceFilter`, `sqlitePath`.
-- **Exports for tooling and tests**: `readAllTelemetry`, `deleteConversation`, `analyzeConversation`, `validateConversationId`, `clearAnalysisCache`, `recyclePaths`, `parseWorkspaceInfo`, `conversationMatchesWorkspace`, `selectActiveConversation`, `getSqliteBinary`, `setCustomSqlitePath`.
+- **Settings** (`getConfig()`): `dataSource` (`auto`, `ide`, `extension`, `both`), `deleteToRecycleBin`, `workspaceFilter`, `sqlitePath`.
+- **Exports for tooling and tests**: `readAllTelemetry`, `deleteConversation`, `analyzeConversation`, `validateConversationId`, `clearAnalysisCache`, `dumpAnalysisCache`, `loadAnalysisCache`, `extractSubagentRole`, `recyclePaths`, `parseWorkspaceInfo`, `conversationMatchesWorkspace`, `selectActiveConversation`, `getSqliteBinary`, `setCustomSqlitePath`, `getInstallationRoots`, `getVscdbSummaries`, `parseVscdbTrajectorySummaries`, `extractInDbWorkspaces`, `extractInDbPrompt`, `extractInDbMetadata`.
 - **Delete outcomes** are reported through `reportDeleteResult()`, which distinguishes full success, partial failure (locked files) and "nothing to delete" — never claim bytes that were not freed.
 
 ---
 
 ## 3. Antigravity Storage Architecture & The "Ghost Chat" Problem
 
-### Antigravity Storage Locations:
+### Multi-Root Antigravity Ecosystem:
 
-| Path                                                          | Purpose                                                                                                                              | Size / Impact                                     |
-| :------------------------------------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------ |
-| `%USERPROFILE%\.gemini\antigravity\conversations\<id>.db`     | SQLite database with `gen_metadata` table storing protobuf turn telemetry. Also `<id>.db-wal` and `<id>.db-shm`.                     | 1 MB – 15 MB per chat                             |
-| `%USERPROFILE%\.gemini\antigravity\conversation_summaries.db` | Catalog table `conversation_summaries` listing conversation ID, title, last modified timestamp, step count.                          | Global database                                   |
-| `%USERPROFILE%\.gemini\antigravity\brain\<id>\`               | Transcripts (`transcript.jsonl`, `transcript_full.jsonl`), `.system_generated/` logs, `.user_uploaded/` media, and `scratch/` files. | **10 MB – 80 MB+ per chat** (major disk consumer) |
-| `%USERPROFILE%\.gemini\antigravity\annotations\<id>.pbtxt`    | Protobuf text format annotation metadata.                                                                                            | Few KB                                            |
-| `%USERPROFILE%\.gemini\antigravity\browser_recordings\<id>\`  | Screen and web session recordings (if browser MCP used).                                                                             | Variable                                          |
-| `%USERPROFILE%\.gemini\antigravity\implicit\<id>.pb`          | Implicit conversation state protobuf.                                                                                                | Few KB                                            |
+The extension unifies telemetry across two distinct Antigravity environments:
+1. **Antigravity Extension in VS Code**: Root at `%USERPROFILE%\.gemini\antigravity`, catalog at `conversation_summaries.db`.
+2. **Antigravity IDE (VS Code Fork)**: Root at `%USERPROFILE%\.gemini\antigravity-ide`, catalog in VS Code state store `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb` under key `antigravityUnifiedStateSync.trajectorySummaries`.
+
+### Storage Locations:
+
+| Path                                                                                                   | Purpose                                                                                                                              | Size / Impact                                     |
+| :----------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------ |
+| `%USERPROFILE%\.gemini\antigravity[-ide]\conversations\<id>.db`                                        | SQLite database with `gen_metadata` table storing protobuf turn telemetry. Also `<id>.db-wal` and `<id>.db-shm`.                     | 1 MB – 15 MB per chat                             |
+| `%USERPROFILE%\.gemini\antigravity\conversation_summaries.db`                                          | Extension catalog table `conversation_summaries` listing conversation ID, title, timestamp, step count.                              | Global database                                   |
+| `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`                                             | IDE catalog table `ItemTable` storing Base64+protobuf trajectory summaries in `antigravityUnifiedStateSync.trajectorySummaries`.     | Global SQLite DB                                  |
+| `<id>.db` tables `trajectory_metadata_blob` & `steps`                                                  | In-DB self-description fallback: workspace URIs (`trajectory_metadata_blob`) & initial user prompt (`steps`, idx=0).                  | Live session fallback                             |
+| `%USERPROFILE%\.gemini\antigravity[-ide]\brain\<id>\`                                                  | Transcripts (`transcript.jsonl`, `transcript_full.jsonl`), `.system_generated/` logs, `.user_uploaded/` media, and `scratch/` files. | **10 MB – 80 MB+ per chat** (major disk consumer) |
+| `%USERPROFILE%\.gemini\antigravity[-ide]\annotations\<id>.pbtxt`                                       | Protobuf text format annotation metadata.                                                                                            | Few KB                                            |
+| `%USERPROFILE%\.gemini\antigravity[-ide]\browser_recordings\<id>\`                                     | Screen and web session recordings (if browser MCP used).                                                                             | Variable                                          |
+| `%USERPROFILE%\.gemini\antigravity[-ide]\implicit\<id>.pb`                                             | Implicit conversation state protobuf.                                                                                                | Few KB                                            |
 
 ### The "Ghost Chat" Incomplete Deletion Finding:
 
@@ -84,9 +92,9 @@ G:\web dev\antigravity-telemetry\
 
 ### Zero-Residue Deletion Engine (`deleteConversation`):
 
-`telemetryReader.js` removes all 7 layers — `conversations/<id>.db` (+`-wal`/`-shm`), `brain/<id>/`,
+`telemetryReader.js` removes all 7 layers across the target session's specific installation root (`extension` or `ide`) — `conversations/<id>.db` (+`-wal`/`-shm`), `brain/<id>/`,
 `annotations/<id>.pbtxt`, `browser_recordings/<id>/`, `implicit/<id>.pb`, the `conversation_summaries`
-row — and returns the exact number of freed bytes.
+row (if present) — and returns the exact number of freed bytes.
 
 **Rules this engine must keep obeying:**
 
@@ -99,8 +107,6 @@ row — and returns the exact number of freed bytes.
   orphaned catalog entry — the exact ghost-chat problem this extension exists to fix. `SELECT changes()` confirms
   the row was actually removed.
 - **Strict UUID validation** before any filesystem or SQL write (`validateConversationId`).
-- `purgeOrphanedData()` deletes each id **at most once** (a `handled` set), refuses to run when the catalog is
-  unreadable, and reports `catalogRowsRemoved` separately from file deletions.
 
 ---
 
@@ -152,7 +158,7 @@ triggers compaction:
 | vs the extension's `fresh + cached` sum | ratio 0.98 - 1.41, avg 1.06 - 1.12 (i.e. that sum under-reports)               |
 
 Use this field (falling back to `fresh + cached` and 255 k for older chats) for context fill %, the chart
-ceiling, and compaction detection. A drop between consecutive values **is** a compaction, with an exact drop size.
+ceiling, and compaction detection. A sustained drop between consecutive values is a compaction, with an exact drop size (qualified against transient planner V-dips in Antigravity IDE where tool outputs are temporarily pruned and context rebounds within 2 turns).
 
 > [!NOTE]
 > `Tag 9 → Tag 10 → Tag 1` (trajectory context) and `Tag 4 → Tag 5` (API prompt cache) measure
@@ -175,6 +181,32 @@ ceiling, and compaction detection. A drop between consecutive values **is** a co
 
 Context fill % = `min(100, round(Current Context / Ceiling × 100))`.
 
+### Antigravity IDE Catalog Schema (`state.vscdb`):
+
+- **Location**: `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`
+- **Key**: `antigravityUnifiedStateSync.trajectorySummaries` in SQLite table `ItemTable`.
+- **Value**: UTF-8 Base64 string wrapping binary protobuf records.
+- **Protobuf wire schema**:
+  - `Tag 1` (Repeated Message: Trajectory Summary item):
+    - `Tag 1` (String): Conversation UUID (`id`)
+    - `Tag 2` (Varint): Step count / turns
+    - `Tag 3` (String): Conversation Title
+    - `Tag 5` (Varint): Timestamp (milliseconds or seconds)
+    - `Tag 7` (Varint): Last modified timestamp (seconds)
+    - `Tag 9` (Message): Workspace metadata containing `Tag 1` or `Tag 2` (Workspace URI / directory path)
+    - `Tag 17` / `Tag 21` (Message): Workspace URI references (`file:///...`)
+    - `Tag 23` (Message): Parent conversation linkage
+
+### In-DB Self-Description Fallback Schema (`<id>.db`):
+
+For in-flight / active sessions not yet committed to `state.vscdb`, `<id>.db` contains its own self-description:
+1. **Workspace Paths**:
+   - Table `trajectory_metadata_blob (id TEXT PRIMARY KEY, data BLOB)` where `id = 'main'`.
+   - `Tag 1` (Message) $\rightarrow$ `Tag 7` (Message) $\rightarrow$ repeated `Tag 2` (String): Workspace directory paths (e.g. `g:\web dev\antigravity-telemetry`).
+2. **Conversation Title / First Prompt**:
+   - Table `steps (idx INTEGER PRIMARY KEY, data BLOB)`.
+   - First step at `idx = 0`: Protobuf message with `Tag 19` (Message) $\rightarrow$ `Tag 2` (String): User's initial prompt text. Used as session title fallback.
+
 ---
 
 ## 5. Critical Frontend / Webview Development Rules
@@ -192,9 +224,9 @@ Context fill % = `min(100, round(Current Context / Ceiling × 100))`.
 > **Safe pattern** — give it an `id` and bind it in `bindEvents()`:
 >
 > ```javascript
-> // markup: <button id="purgeOrphansBtn">🧹 Purge Ghost Chats</button>
-> const el = document.getElementById("purgeOrphansBtn");
-> if (el) el.onclick = () => purgeOrphans();
+> // markup: <button id="refreshBtn">Refresh</button>
+> const el = document.getElementById("refreshBtn");
+> if (el) el.onclick = () => handleRefresh();
 > ```
 >
 > Same rule for `style="…"`: `style-src` includes `'unsafe-inline'` so inline style attributes work, but do
@@ -267,8 +299,9 @@ Context fill % = `min(100, round(Current Context / Ceiling × 100))`.
 
 ### Marketplace Distribution:
 
-The extension is published on the VS Code Marketplace:
-[HarshMann.antigravity-telemetry](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
+The extension is published on:
+- **VS Code Marketplace**: [HarshMann.antigravity-telemetry](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
+- **Open VSX Registry**: [HarshMann/antigravity-telemetry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry)
 
 ### Reloading After Edits:
 
@@ -295,7 +328,7 @@ npm run package              # Packages the extension as a standalone .vsix via 
 
 The extension is packaged as a standalone installer using `@vscode/vsce`:
 - Configuration: `.vscodeignore` excludes development scripts (`scripts/`, dev inputs, etc.) and dev inputs (`tailwind-input.css`).
-- Build command: `npm run package` generates `antigravity-telemetry-1.0.0.vsix` (~58 KB, 10 runtime files).
+- Build command: `npm run package` generates `antigravity-telemetry-1.1.0.vsix` (~314 KB, 12 runtime files including icons).
 - Zero runtime dependencies: all telemetry parsing runs on pure Node built-ins and precompiled CSS.
 
 ### Invariants — every row here has already caused a real bug:
@@ -303,7 +336,7 @@ The extension is packaged as a standalone installer using `@vscode/vsce`:
 | Trap                                                      | What happens                                                                                                                           | Rule                                                                                 |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Inline `onclick` under the nonce CSP                      | Control silently does nothing (console violation only)                                                                                 | Bind in `bindEvents()` (§5)                                                          |
-| Treating a `null` catalog as `{}`                         | Every chat looks like a ghost; purge offered for healthy chats                                                                         | Check `catalogAvailable`                                                             |
+| Treating a `null` catalog as `{}`                         | Every chat looks like a ghost; healthy chats falsely flagged as ghosts                                                                 | Check `catalogAvailable`                                                             |
 | A new per-conversation field not added to the cache state | Correct on first refresh, silently stale afterwards                                                                                    | Derive from cached state, or add it to the `(mtimeMs, size, walSignature)` signature |
 | `Number(bigint)` on a varint                              | The `2^64-1` sentinel leaks as `1.8e19` into the UI                                                                                    | Use `safeVarintNumber()` / `numField()`                                              |
 | Deleting the catalog row before verifying files           | Creates new ghost chats                                                                                                                | Verify with `existsSync` first, then delete the row                                  |
@@ -344,21 +377,39 @@ feature will behave sensibly. Re-measure before relying on it.
 **Deletion defaults to the Recycle Bin, not permanent removal.** Six storage layers are wiped in
 one action, so recoverability matters more than the few seconds saved.
 
+**Extension Icon & Branding Guidelines (Avoiding the "Box-in-a-Box" Trap):**
+- **Asset Paths & Dimensions**:
+  - `media/icon.png`: **256×256 PNG** (~80 KB, referenced in `package.json`). Displayed in VS Code Extensions sidebar, Marketplace, and webview panel icon.
+  - `logo.png`: **1024×1024 PNG** in repository root for GitHub display and high-res source exports.
+- **The "Box-in-a-Box" Anti-Pattern to NEVER Repeat**:
+  - Never generate or ship an icon with an opaque dark outer rectangular background surrounding an inner rounded border frame.
+  - Because VS Code theme backgrounds (`#18181b`, `#252526`, or light themes) differ from the image's canvas background, any outer dark rectangular margin creates an ugly mismatched square tile with double-border artifacts.
+- **Two Permissible Icon Formats**:
+  1. **Edge-to-Edge Squircle Badge (Current Asset)**: The rounded badge must touch the image canvas borders edge-to-edge (0px outer margin), with the 4 outer corner areas outside the radius masked to **100% transparent PNG alpha**. Corner radius: ~22.5% of dimension.
+  2. **Borderless Floating Glyph (Modern Standard)**: Pure vector glyph (e.g. telemetry waves / arch) floating on a **100% transparent PNG background** with no enclosing box or boundary stroke, scaled to occupy ~85–90% of the canvas.
+- **When Replacing Icons**:
+  - Update both `media/icon.png` (256×256) and `logo.png` (1024×1024).
+  - Run `npm run package` (or `cmd /c npm run package` on Windows) to repackage the `.vsix` installer.
+  - Verify with `node scripts/self-check.js`.
+
 ---
 
 ## 9. Known Gaps & Backlog
 
 **Open**
 
-1. **Cold start is ~2 s** after a window reload. Single-process `sqlite3` batching was deliberately cut for leanness; the warm path is ~30 ms. Revisit only if the cold delay becomes annoying.
-2. **~100 KB of stats JSON** is posted to the webview on every refresh. Fine at the current size; if the dashboard ever feels heavy, send only the selected conversation's timeline.
+1. **~100 KB of stats JSON** is posted to the webview on every refresh. Fine at the current size; if the dashboard ever feels heavy, send only the selected conversation's timeline.
 
 **Resolved**
 
+- **Antigravity IDE & Multi-Root Support (Issue #1)**: Unified multi-root directory scanning (`.gemini/antigravity` + `.gemini/antigravity-ide`), decoding of Antigravity IDE's `state.vscdb` (`antigravityUnifiedStateSync.trajectorySummaries`), in-DB self-description fallback (`trajectory_metadata_blob` + `steps`) for active/uncataloged sessions, and `antigravity.dataSource` configuration.
+- **Cold start & window-reload latency resolved**: Implemented persistent cache via VS Code `globalState` (`dumpAnalysisCache()` / `loadAnalysisCache()`), catalog summaries caching (`conversation_summaries.db`), and optimized syscalls. Warm restart telemetry load drops from ~3,500 ms down to ~30–50 ms (~98% faster).
+- **Subagent Role Extraction & Hierarchy**: Decoded protobuf `raw_summary` records (`Tag 17 → Tag 8 → Tag 2`) eliminating generic "Untitled Conversation" placeholders. Added interactive collapsible section toggle in detail view.
+- **Manual Refresh in Webview**: Added dedicated header refresh button with live spinning feedback and update confirmation.
 - **Non-JSON catalog fallback completed**: Added full parity for subagent hierarchy (`parent_conversation_id`, `nesting_depth`, `agent_name`, `killed`, and `HEX(raw_summary)` role extraction) to the delimiter-split fallback path.
 - **Bulk automated ghost purging removed**: Replaced with safe per-conversation deletion to eliminate data loss risk from temporary catalog lockouts.
 - **Dual-scroll layout resolved**: Pinned header and flex-1 scroll container eliminate nested scroll jail across viewport sizes.
-- **Packaging workflow established**: Added `.vscodeignore` and `npm run package` producing a self-contained 58 KB `.vsix` installer.
+- **Packaging workflow established**: Added `.vscodeignore` and `npm run package` producing a self-contained `.vsix` installer.
 
 ---
 
@@ -389,6 +440,16 @@ Releases are built and published automatically via `.github/workflows/release.ym
    git push origin main
    ```
    Then trigger the workflow manually from GitHub (Actions → **Release** → **Run workflow**). The workflow automatically derives `v<version>` from `package.json` and creates the release on that commit.
+
+3. **Publishing to Marketplaces:**
+   - **VS Code Marketplace:**
+     ```bash
+     npx @vscode/vsce publish
+     ```
+   - **Open VSX Registry:**
+     ```bash
+     npx ovsx publish <vsix-file> -p <OVSX_TOKEN>
+     ```
 
 ### Note on GitHub Actions Tests:
 - Pre-flight test checks (`npm run self-check`) have been **intentionally removed from `.github/workflows/release.yml`** by the user to keep the CI release workflow fast and unblocked.

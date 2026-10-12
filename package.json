@@ -2,7 +2,7 @@
   "name": "antigravity-telemetry",
   "displayName": "Antigravity Telemetry - Context & Token Monitor",
   "description": "Live context window usage, prompt cache hit rate, and token intelligence for Antigravity",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "publisher": "HarshMann",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -56,6 +56,23 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Custom path to the sqlite3 CLI executable. If left empty, Antigravity Telemetry searches common directories (e.g. adb platform-tools) and system PATH automatically."
+        },
+        "antigravity.dataSource": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "ide",
+            "extension",
+            "both"
+          ],
+          "enumDescriptions": [
+            "Automatically detect based on active editor: Antigravity IDE when in IDE, Antigravity Extension when in VS Code",
+            "Antigravity IDE standalone application (~/.gemini/antigravity-ide)",
+            "Antigravity Extension in VS Code (~/.gemini/antigravity)",
+            "Show conversations from both Antigravity IDE and Antigravity Extension"
+          ],
+          "default": "auto",
+          "markdownDescription": "Source of Antigravity telemetry: 'auto' (detects active editor: Antigravity IDE when in IDE, Antigravity Extension when in VS Code), 'ide' (Antigravity IDE standalone), 'extension' (Antigravity Extension in VS Code), or 'both' (merges both environments)."
         }
       }
     },

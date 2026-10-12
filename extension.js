@@ -3,24 +3,27 @@ const fs = require('fs');
 const path = require('path');
 const {
   readAllTelemetry,
-  getAntigravityPaths,
+  getInstallationRoots,
+  setDataSource,
   deleteConversation,
   conversationMatchesWorkspace,
   selectActiveConversation,
-  setCustomSqlitePath
+  setCustomSqlitePath,
+  dumpAnalysisCache,
+  loadAnalysisCache
 } = require('./telemetryReader');
 const { getDashboardHtml } = require('./dashboardHtml');
 
 let statusBarItem = null;
 let currentPanel = null;
 let telemetryState = { conversations: [], active: null };
-let watcher = null;
-let summaryWatcher = null;
+let activeWatchers = [];
 let refreshTimer = null;
 let isRefreshing = false;      // re-entrancy guard: watcher + timer + manual refresh must not stack
 let lastStatusText = '';
 let logChannel = null;
 let extensionUri = null;
+let extensionContext = null;
 let catalogWarningLogged = false;
 let sqliteWarningLogged = false;
 
@@ -29,12 +32,23 @@ function log(message) {
   logChannel.appendLine(`[${new Date().toLocaleTimeString()}] ${message}`);
 }
 
+function getDetectedEditorEnvironment() {
+  const appName = (vscode.env && vscode.env.appName) || '';
+  const uriScheme = (vscode.env && vscode.env.uriScheme) || '';
+  const execPath = process.execPath || '';
+  if (/antigravity/i.test(appName) || /antigravity/i.test(uriScheme) || /antigravity/i.test(execPath)) {
+    return 'ide';
+  }
+  return 'extension';
+}
+
 function getConfig() {
   const cfg = vscode.workspace.getConfiguration('antigravity');
   return {
     deleteToRecycleBin: cfg.get('deleteToRecycleBin', true),
     workspaceFilter: cfg.get('workspaceFilter', 'current'),
-    sqlitePath: cfg.get('sqlitePath', '')
+    sqlitePath: cfg.get('sqlitePath', ''),
+    dataSource: cfg.get('dataSource', 'auto')
   };
 }
 
@@ -74,14 +88,18 @@ function formatTokens(num) {
   return String(num);
 }
 
-function updateTelemetry() {
+function updateTelemetry(options = {}) {
+  const force = Boolean(options && options.force);
   // A full scan can take ~2s on a cold cache; without this guard the file watcher, the poll
   // timer and a manual refresh can all queue up behind each other.
   if (isRefreshing) return;
   isRefreshing = true;
   try {
-    setCustomSqlitePath(getConfig().sqlitePath);
-    telemetryState = readAllTelemetry();
+    const cfg = getConfig();
+    const hostEditor = getDetectedEditorEnvironment();
+    setCustomSqlitePath(cfg.sqlitePath);
+    setDataSource(cfg.dataSource);
+    telemetryState = readAllTelemetry({ dataSource: cfg.dataSource, hostEditor, force });
 
     if (telemetryState.sqliteAvailable === false) {
       if (!sqliteWarningLogged) {
@@ -115,6 +133,12 @@ function updateTelemetry() {
         currentWorkspaceName: getCurrentWorkspaceName(),
         currentWorkspacePaths: getCurrentWorkspaceFolders()
       });
+    }
+    if (telemetryState && telemetryState.conversations && extensionContext) {
+      try {
+        const dump = dumpAnalysisCache();
+        extensionContext.globalState.update('telemetryAnalysisCache', dump);
+      } catch { }
     }
   } catch (err) {
     log(`Refresh failed: ${err && err.stack ? err.stack : err}`);
@@ -151,35 +175,67 @@ async function reportDeleteResult(result, label, recycled) {
   if (choice === 'Show Details') logChannel.show();
 }
 
-// Writing identical text still makes VS Code re-layout the status bar, so only assign on change.
+// Writing identical text or tooltip makes VS Code re-layout the status bar and dismiss/flicker
+// hover widgets, so only mutate properties when their actual values change.
+let lastStatusTooltip = '';
+let lastStatusBgColor = null;
+let lastStatusCommand = '';
+let isStatusBarShown = false;
+
 function setStatusText(text) {
   if (text === lastStatusText) return;
   lastStatusText = text;
   statusBarItem.text = text;
 }
 
+function setStatusTooltip(md) {
+  const value = md ? (typeof md === 'string' ? md : md.value) : '';
+  if (value === lastStatusTooltip) return;
+  lastStatusTooltip = value;
+  statusBarItem.tooltip = md;
+}
+
+function setStatusBackgroundColor(color) {
+  if (color === lastStatusBgColor) return;
+  lastStatusBgColor = color;
+  statusBarItem.backgroundColor = color;
+}
+
+function setStatusCommand(cmd) {
+  if (cmd === lastStatusCommand) return;
+  lastStatusCommand = cmd;
+  statusBarItem.command = cmd;
+}
+
+function ensureStatusBarShown() {
+  if (!isStatusBarShown) {
+    statusBarItem.show();
+    isStatusBarShown = true;
+  }
+}
+
 function updateStatusBar() {
   if (!statusBarItem) return;
 
   if (telemetryState && telemetryState.sqliteAvailable === false) {
-    statusBarItem.command = 'antigravity.setSqlitePath';
+    setStatusCommand('antigravity.setSqlitePath');
     setStatusText('$(error) Antigravity: sqlite3 missing');
-    statusBarItem.tooltip = 'sqlite3 CLI not found. Click to set sqlite3 path.';
-    statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-    statusBarItem.show();
+    setStatusTooltip('sqlite3 CLI not found. Click to set sqlite3 path.');
+    setStatusBackgroundColor(new vscode.ThemeColor('statusBarItem.errorBackground'));
+    ensureStatusBarShown();
     return;
   }
 
-  statusBarItem.command = 'antigravity.showMenu';
+  setStatusCommand('antigravity.showMenu');
   const active = getActiveConversation();
   if (!active || !active.stats) {
     setStatusText('Antigravity: Idle');
     const isFiltered = getConfig().workspaceFilter === 'current' && getCurrentWorkspaceFolders().length > 0;
-    statusBarItem.tooltip = isFiltered
-      ? `Antigravity Telemetry: No active conversation found for workspace "${getCurrentWorkspaceName()}".`
-      : 'Antigravity Telemetry: No active conversation found.';
-    statusBarItem.backgroundColor = undefined;
-    statusBarItem.show();
+    setStatusTooltip(isFiltered
+      ? `No active conversation found for workspace "${getCurrentWorkspaceName()}". Click to open menu.`
+      : 'No active conversation found. Click to open menu.');
+    setStatusBackgroundColor(undefined);
+    ensureStatusBarShown();
     return;
   }
 
@@ -198,25 +254,25 @@ function updateStatusBar() {
   setStatusText(`${shortTitle} | ${shortContext} (${contextPct}%) · ${s.cacheHitRate}% cache`);
 
   // Native status bar styling (no background coloring based on context)
-  statusBarItem.backgroundColor = undefined;
+  setStatusBackgroundColor(undefined);
 
-  // Markdown Tooltip
+  // Markdown Tooltip: compact, clutter-free layout
   const filledBlocks = Math.min(12, Math.round((currentContext / contextLimit) * 12));
   const emptyBlocks = 12 - filledBlocks;
   const progressBar = '█'.repeat(filledBlocks) + '░'.repeat(emptyBlocks);
 
-  const md = new vscode.MarkdownString();
-  // Chat titles are user data: only our own commands may be linked from the tooltip.
+  const md = new vscode.MarkdownString('', true);
+  md.supportThemeIcons = true;
+  // Only our own registered commands may be invoked from the tooltip.
   md.isTrusted = {
     enabledCommands: ['antigravity.showMenu', 'antigravity.openDashboard', 'antigravity.refresh']
   };
-  md.appendMarkdown(`### ⚡ Antigravity Telemetry: Active Chat\n\n`);
-  md.appendMarkdown(`**${active.title}**\n\n`);
-  if (active.workspaceName) {
-    md.appendMarkdown(`* **Workspace:** \`${active.workspaceName}\`\n\n`);
-  }
-  md.appendMarkdown(`---\n\n`);
-  md.appendMarkdown(`* **Context Usage:** \`${shortContext} / ${limitStr}\` tokens (${contextPct}%)\n`);
+
+  const wsBadge = active.workspaceName ? ` \`[${active.workspaceName}]\`` : '';
+  const agentPrefix = active.isSubagent ? `$(hubot) [${active.agentName || 'subagent'}] ` : '';
+
+  md.appendMarkdown(`**${agentPrefix}${active.title}**${wsBadge}\n\n`);
+  md.appendMarkdown(`* **Context Usage:** \`${shortContext} / ${limitStr}\` (${contextPct}%)\n`);
   md.appendMarkdown(`* **Window Meter:** \`[${progressBar}]\`\n`);
   md.appendMarkdown(`* **Cache Read:** **${formatTokens(s.totalCached)}** (${s.cacheVolumeRate}% vol · ${s.cacheHitRate}% hits)\n`);
   md.appendMarkdown(`* **Uncached Input:** **${formatTokens(s.totalNonCached)}** (fresh prompt)\n`);
@@ -224,8 +280,8 @@ function updateStatusBar() {
   md.appendMarkdown(`---\n`);
   md.appendMarkdown(`*Click to open Telemetry Menu or Visual Dashboard*`);
 
-  statusBarItem.tooltip = md;
-  statusBarItem.show();
+  setStatusTooltip(md);
+  ensureStatusBarShown();
 }
 
 async function promptSetSqlitePath() {
@@ -304,6 +360,18 @@ async function showMenu() {
     }
   ];
 
+  const host = getDetectedEditorEnvironment();
+  const currentSourceSetting = getConfig().dataSource;
+  const activeSourceName = currentSourceSetting === 'auto'
+    ? `Auto (${host === 'ide' ? 'Antigravity IDE' : 'Antigravity Extension'})`
+    : (currentSourceSetting === 'ide' ? 'Antigravity IDE' : (currentSourceSetting === 'extension' ? 'Antigravity Extension' : 'Both (Merged)'));
+
+  items.push({
+    label: `$(database) Data Source: ${activeSourceName}...`,
+    description: 'Switch data source between Antigravity IDE, Antigravity Extension, or Both',
+    action: 'switchDataSource'
+  });
+
   items.push({
     label: '$(gear) Configure sqlite3 Path...',
     description: getConfig().sqlitePath ? `Current: ${getConfig().sqlitePath}` : 'Auto-detecting from system PATH and common locations',
@@ -333,8 +401,47 @@ async function showMenu() {
     showHistoryPicker();
   } else if (selected.action === 'deleteConv') {
     promptDeleteConversation();
+  } else if (selected.action === 'switchDataSource') {
+    promptSwitchDataSource();
   } else if (selected.action === 'setSqlitePath') {
     promptSetSqlitePath();
+  }
+}
+
+async function promptSwitchDataSource() {
+  const current = getConfig().dataSource;
+  const host = getDetectedEditorEnvironment();
+  const options = [
+    {
+      label: `${current === 'auto' ? '$(check) ' : ''}Auto (Active Editor)`,
+      description: `Automatically loads ${host === 'ide' ? 'Antigravity IDE' : 'Antigravity Extension'} based on the current window`,
+      value: 'auto'
+    },
+    {
+      label: `${current === 'ide' ? '$(check) ' : ''}Antigravity IDE`,
+      description: 'Show conversations from standalone Antigravity IDE (~/.gemini/antigravity-ide)',
+      value: 'ide'
+    },
+    {
+      label: `${current === 'extension' ? '$(check) ' : ''}Antigravity Extension`,
+      description: 'Show conversations from Antigravity Extension in VS Code (~/.gemini/antigravity)',
+      value: 'extension'
+    },
+    {
+      label: `${current === 'both' ? '$(check) ' : ''}Both (Merged)`,
+      description: 'Merge conversations from both Antigravity IDE and Antigravity Extension',
+      value: 'both'
+    }
+  ];
+
+  const picked = await vscode.window.showQuickPick(options, {
+    placeHolder: 'Select Antigravity Telemetry Data Source'
+  });
+
+  if (picked) {
+    await vscode.workspace.getConfiguration('antigravity').update('dataSource', picked.value, vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage(`Antigravity Telemetry data source set to: ${picked.label.replace('$(check) ', '')}`);
+    updateTelemetry();
   }
 }
 
@@ -491,7 +598,7 @@ function openDashboard(selectedConvId) {
         vscode.window.showErrorMessage(`Failed to delete conversation: ${err.message}`);
       }
     } else if (message.command === 'refresh') {
-      updateTelemetry();
+      updateTelemetry({ force: true });
     }
   });
 
@@ -502,6 +609,17 @@ function openDashboard(selectedConvId) {
 
 function activate(context) {
   extensionUri = context.extensionUri;
+  extensionContext = context;
+
+  // Restore persistent telemetry cache for instant startup (< 50ms)
+  try {
+    const savedCache = context.globalState.get('telemetryAnalysisCache');
+    if (savedCache) {
+      loadAnalysisCache(savedCache);
+    }
+  } catch (err) {
+    log(`Failed to load persistent telemetry cache: ${err.message}`);
+  }
 
   // Create Status Bar Item
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -514,7 +632,7 @@ function activate(context) {
     vscode.commands.registerCommand('antigravity.showMenu', showMenu),
     vscode.commands.registerCommand('antigravity.openDashboard', () => openDashboard()),
     vscode.commands.registerCommand('antigravity.refresh', () => {
-      updateTelemetry();
+      updateTelemetry({ force: true });
       vscode.window.showInformationMessage('Antigravity Telemetry refreshed.');
     }),
     vscode.commands.registerCommand('antigravity.deleteConversation', promptDeleteConversation),
@@ -525,39 +643,74 @@ function activate(context) {
   // Initial read
   updateTelemetry();
 
-  const { convDir, antigravityDir, summariesDb } = getAntigravityPaths();
+  function setupWatchers() {
+    for (const w of activeWatchers) {
+      try { w.close(); } catch {}
+    }
+    activeWatchers = [];
 
-  // Conversation databases change on every turn. If Antigravity keeps a WAL open the write
-  // lands in <id>.db-wal, so match the whole file family rather than only ".db".
-  if (fs.existsSync(convDir)) {
-    let dbDebounce = null;
-    try {
-      watcher = fs.watch(convDir, (eventType, filename) => {
-        if (filename && !/\.db(-wal|-shm|-journal)?$/.test(filename)) return;
-        clearTimeout(dbDebounce);
-        dbDebounce = setTimeout(() => updateTelemetry(), 400);
-      });
-      context.subscriptions.push({ dispose: () => watcher && watcher.close() });
-    } catch (err) {
-      log(`Watcher error on ${convDir}: ${err.message}`);
+    const roots = getInstallationRoots(getConfig().dataSource, getDetectedEditorEnvironment());
+
+    for (const root of roots) {
+      // Conversation databases change on every turn. If Antigravity keeps a WAL open the write
+      // lands in <id>.db-wal, so match the whole file family rather than only ".db".
+      if (fs.existsSync(root.convDir)) {
+        let dbDebounce = null;
+        try {
+          const w = fs.watch(root.convDir, (eventType, filename) => {
+            if (filename && !/\.db(-wal|-shm|-journal)?$/.test(filename)) return;
+            clearTimeout(dbDebounce);
+            dbDebounce = setTimeout(() => updateTelemetry(), 400);
+          });
+          activeWatchers.push(w);
+        } catch (err) {
+          log(`Watcher error on ${root.convDir}: ${err.message}`);
+        }
+      }
+
+      // The catalog db carries titles, step counts and the killed flag.
+      if (root.summariesDb && fs.existsSync(root.antigravityDir)) {
+        let summaryDebounce = null;
+        try {
+          const sw = fs.watch(root.antigravityDir, (eventType, filename) => {
+            if (filename && path.basename(filename) !== path.basename(root.summariesDb)) return;
+            clearTimeout(summaryDebounce);
+            summaryDebounce = setTimeout(() => updateTelemetry(), 600);
+          });
+          activeWatchers.push(sw);
+        } catch (err) {
+          log(`Watcher error on ${root.antigravityDir}: ${err.message}`);
+        }
+      }
+
+      // For Antigravity IDE, watch state.vscdb in globalStorage
+      if (root.stateVscdb && fs.existsSync(root.stateVscdb)) {
+        let vscdbDebounce = null;
+        const vscdbDir = path.dirname(root.stateVscdb);
+        try {
+          const vw = fs.watch(vscdbDir, (eventType, filename) => {
+            if (filename && !/^state\.vscdb/i.test(path.basename(filename))) return;
+            clearTimeout(vscdbDebounce);
+            vscdbDebounce = setTimeout(() => updateTelemetry(), 800);
+          });
+          activeWatchers.push(vw);
+        } catch (err) {
+          log(`Watcher error on ${vscdbDir}: ${err.message}`);
+        }
+      }
     }
   }
 
-  // The catalog db carries titles, step counts and the killed flag, and was previously not
-  // watched at all, so renames / deletions never showed up until the next poll.
-  if (fs.existsSync(antigravityDir)) {
-    let summaryDebounce = null;
-    try {
-      summaryWatcher = fs.watch(antigravityDir, (eventType, filename) => {
-        if (filename && path.basename(filename) !== path.basename(summariesDb)) return;
-        clearTimeout(summaryDebounce);
-        summaryDebounce = setTimeout(() => updateTelemetry(), 600);
-      });
-      context.subscriptions.push({ dispose: () => summaryWatcher && summaryWatcher.close() });
-    } catch (err) {
-      log(`Watcher error on ${antigravityDir}: ${err.message}`);
+  setupWatchers();
+
+  context.subscriptions.push({
+    dispose: () => {
+      for (const w of activeWatchers) {
+        try { w.close(); } catch {}
+      }
+      activeWatchers = [];
     }
-  }
+  });
 
   // Polling heartbeat: only while the window is focused (the watcher still covers changes
   // made from the Antigravity window), and refresh as soon as focus comes back.
@@ -581,7 +734,10 @@ function activate(context) {
       if (e.affectsConfiguration('antigravity.sqlitePath')) {
         setCustomSqlitePath(getConfig().sqlitePath);
       }
-      if (e.affectsConfiguration('antigravity')) {
+      if (e.affectsConfiguration('antigravity.dataSource')) {
+        setupWatchers();
+        updateTelemetry();
+      } else if (e.affectsConfiguration('antigravity')) {
         updateTelemetry();
       }
     }),
@@ -592,8 +748,16 @@ function activate(context) {
 }
 
 function deactivate() {
-  if (watcher) { watcher.close(); watcher = null; }
-  if (summaryWatcher) { summaryWatcher.close(); summaryWatcher = null; }
+  if (extensionContext) {
+    try {
+      const dump = dumpAnalysisCache();
+      extensionContext.globalState.update('telemetryAnalysisCache', dump);
+    } catch { }
+  }
+  for (const w of activeWatchers) {
+    try { w.close(); } catch {}
+  }
+  activeWatchers = [];
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
   if (logChannel) { logChannel.dispose(); logChannel = null; }
 }

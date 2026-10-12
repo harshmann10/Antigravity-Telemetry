@@ -20,12 +20,78 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 const STORAGE_TTL_MS = 5 * 60 * 1000;
 const STORAGE_MAX_AGE_MS = 30 * 60 * 1000;
 
-// Per-conversation analysis cache: id -> { mtimeMs, size, stats, storageBytes, storageCheckedAt }
-// Keyed on (mtimeMs, size) so an unchanged DB costs zero sqlite3 spawns.
+// Per-conversation analysis cache: id -> { mtimeMs, size, walSignature, stats, storageBytes, storageCheckedAt }
+// Keyed on (mtimeMs, size, walSignature) so an unchanged DB costs zero sqlite3 spawns.
 const analysisCache = new Map();
+
+// Global catalog summaries cache: cached parsing of conversation_summaries.db
+let summariesCache = {
+  mtimeMs: 0,
+  size: 0,
+  walSignature: '',
+  map: null
+};
+
+// VS Code state store cache: cached parsing of state.vscdb (Antigravity IDE)
+let vscdbCache = {
+  mtimeMs: 0,
+  size: 0,
+  map: null
+};
 
 function clearAnalysisCache() {
   analysisCache.clear();
+  summariesCache = { mtimeMs: 0, size: 0, walSignature: '', map: null };
+  vscdbCache = { mtimeMs: 0, size: 0, map: null };
+}
+
+function dumpAnalysisCache() {
+  const conversations = {};
+  for (const [id, entry] of analysisCache.entries()) {
+    conversations[id] = entry;
+  }
+  return {
+    conversations,
+    summaries: summariesCache.map ? {
+      mtimeMs: summariesCache.mtimeMs,
+      size: summariesCache.size,
+      walSignature: summariesCache.walSignature,
+      map: summariesCache.map
+    } : null,
+    vscdb: vscdbCache.map ? {
+      mtimeMs: vscdbCache.mtimeMs,
+      size: vscdbCache.size,
+      map: vscdbCache.map
+    } : null
+  };
+}
+
+function loadAnalysisCache(cached) {
+  if (!cached || typeof cached !== 'object') return;
+  const convs = cached.conversations || (cached.summaries ? null : cached);
+  if (convs && typeof convs === 'object') {
+    analysisCache.clear();
+    for (const [id, entry] of Object.entries(convs)) {
+      if (entry && typeof entry === 'object' && typeof entry.mtimeMs === 'number' && entry.stats) {
+        analysisCache.set(id, entry);
+      }
+    }
+  }
+  if (cached.summaries && typeof cached.summaries === 'object' && cached.summaries.map) {
+    summariesCache = {
+      mtimeMs: cached.summaries.mtimeMs || 0,
+      size: cached.summaries.size || 0,
+      walSignature: cached.summaries.walSignature || '',
+      map: cached.summaries.map
+    };
+  }
+  if (cached.vscdb && typeof cached.vscdb === 'object' && cached.vscdb.map) {
+    vscdbCache = {
+      mtimeMs: cached.vscdb.mtimeMs || 0,
+      size: cached.vscdb.size || 0,
+      map: cached.vscdb.map
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -151,12 +217,110 @@ function getSqliteBinary() {
   return null;
 }
 
-function getAntigravityPaths() {
+let currentDataSource = 'auto';
+
+function setDataSource(source) {
+  currentDataSource = source || 'auto';
+}
+
+function detectRunningEnvironment() {
+  if (process.execPath && /antigravity/i.test(process.execPath)) {
+    return 'ide';
+  }
+  return null;
+}
+
+function getInstallationRoots(preference, hostEditor) {
+  const pref = preference || currentDataSource || 'auto';
+
   const userHome = os.homedir();
-  const antigravityDir = path.join(userHome, '.gemini', 'antigravity');
-  const convDir = path.join(antigravityDir, 'conversations');
-  const summariesDb = path.join(antigravityDir, 'conversation_summaries.db');
-  return { antigravityDir, convDir, summariesDb };
+  const extensionDir = path.join(userHome, '.gemini', 'antigravity');
+  const ideDir = path.join(userHome, '.gemini', 'antigravity-ide');
+
+  const candidateVscdb = [];
+  if (process.platform === 'win32' && process.env.APPDATA) {
+    candidateVscdb.push(
+      path.join(process.env.APPDATA, 'Antigravity IDE', 'User', 'globalStorage', 'state.vscdb'),
+      path.join(process.env.APPDATA, 'Antigravity', 'User', 'globalStorage', 'state.vscdb')
+    );
+  } else if (process.platform === 'darwin') {
+    candidateVscdb.push(
+      path.join(userHome, 'Library', 'Application Support', 'Antigravity IDE', 'User', 'globalStorage', 'state.vscdb'),
+      path.join(userHome, 'Library', 'Application Support', 'Antigravity', 'User', 'globalStorage', 'state.vscdb')
+    );
+  } else {
+    candidateVscdb.push(
+      path.join(userHome, '.config', 'Antigravity IDE', 'User', 'globalStorage', 'state.vscdb'),
+      path.join(userHome, '.config', 'Antigravity', 'User', 'globalStorage', 'state.vscdb'),
+      path.join(userHome, '.config', 'antigravity', 'User', 'globalStorage', 'state.vscdb')
+    );
+  }
+
+  let vscdbPath = '';
+  for (const cand of candidateVscdb) {
+    if (fs.existsSync(cand)) {
+      vscdbPath = cand;
+      break;
+    }
+  }
+  if (!vscdbPath && candidateVscdb.length > 0) {
+    vscdbPath = candidateVscdb[0];
+  }
+
+  const hasExtension = fs.existsSync(extensionDir);
+  const hasIde = fs.existsSync(ideDir);
+
+  const ideRoot = {
+    id: 'ide',
+    name: 'Antigravity IDE',
+    antigravityDir: ideDir,
+    convDir: path.join(ideDir, 'conversations'),
+    summariesDb: path.join(ideDir, 'conversation_summaries.db'),
+    stateVscdb: fs.existsSync(vscdbPath) ? vscdbPath : null
+  };
+
+  const extensionRoot = {
+    id: 'extension',
+    name: 'Antigravity Extension',
+    antigravityDir: extensionDir,
+    convDir: path.join(extensionDir, 'conversations'),
+    summariesDb: path.join(extensionDir, 'conversation_summaries.db'),
+    stateVscdb: null
+  };
+
+  const roots = [];
+
+  if (pref === 'ide') {
+    if (hasIde) roots.push(ideRoot);
+  } else if (pref === 'extension') {
+    if (hasExtension) roots.push(extensionRoot);
+  } else if (pref === 'both') {
+    if (hasIde) roots.push(ideRoot);
+    if (hasExtension) roots.push(extensionRoot);
+  } else {
+    // pref === 'auto' -> strictly select the active host editor environment to prevent clutter
+    const target = hostEditor || detectRunningEnvironment();
+    if (target === 'ide' && hasIde) {
+      roots.push(ideRoot);
+    } else if (target === 'extension' && hasExtension) {
+      roots.push(extensionRoot);
+    } else if (hasIde && !hasExtension) {
+      roots.push(ideRoot);
+    } else if (hasExtension && !hasIde) {
+      roots.push(extensionRoot);
+    } else if (hasIde && hasExtension) {
+      // Both exist outside of an explicit host: prefer extension without merging
+      roots.push(extensionRoot);
+    }
+  }
+
+  // Fallback if roots is still empty
+  if (roots.length === 0) {
+    if (hasIde) roots.push(ideRoot);
+    else roots.push(extensionRoot);
+  }
+
+  return roots;
 }
 
 function parseWorkspaceInfo(rawUris) {
@@ -220,27 +384,23 @@ function extractSubagentRole(hexRaw) {
   const buf = Buffer.from(hexRaw, 'hex');
   let offset = 0;
 
-  function readVarint() {
-    let res = 0n;
-    let shift = 0n;
-    while (offset < buf.length) {
-      const b = buf[offset++];
-      res |= BigInt(b & 0x7f) << shift;
-      shift += 7n;
-      if ((b & 0x80) === 0) break;
-    }
-    return res;
-  }
-
   function findTag(limit, targetTag) {
     while (offset < limit) {
-      const tagWire = Number(readVarint());
+      const v = readVarint(buf, offset);
+      if (!v) break;
+      offset = v.nextOffset;
+      const tagWire = Number(v.val);
       const fNum = tagWire >> 3;
       const wType = tagWire & 7;
       if (wType === 0) {
-        readVarint();
+        const v0 = readVarint(buf, offset);
+        if (!v0) break;
+        offset = v0.nextOffset;
       } else if (wType === 2) {
-        const len = Number(readVarint());
+        const lenObj = readVarint(buf, offset);
+        if (!lenObj) break;
+        offset = lenObj.nextOffset;
+        const len = Number(lenObj.val);
         const start = offset;
         const end = offset + len;
         if (fNum === targetTag) {
@@ -281,7 +441,21 @@ function extractSubagentRole(hexRaw) {
 // Callers MUST distinguish these: treating "unreadable" as "empty" makes every conversation
 // look like an orphan, which is how a purge could be offered for healthy chats.
 function getConversationSummaries(summariesDb, sqliteBin) {
-  if (!fs.existsSync(summariesDb)) return {};
+  let stat = null;
+  try {
+    stat = fs.statSync(summariesDb);
+  } catch {
+    return {};
+  }
+
+  const walSig = walSignatureOf(summariesDb);
+  if (summariesCache.map &&
+      summariesCache.mtimeMs === stat.mtimeMs &&
+      summariesCache.size === stat.size &&
+      summariesCache.walSignature === walSig) {
+    return summariesCache.map;
+  }
+
   try {
     const sql = `SELECT conversation_id, ifnull(title,'') AS title, ifnull(preview,'') AS preview, ifnull(step_count,0) AS step_count, ifnull(last_modified_time,'') AS last_modified_time, ifnull(workspace_uris,'') AS workspace_uris, ifnull(parent_conversation_id,'') AS parent_conversation_id, ifnull(nesting_depth,0) AS nesting_depth, ifnull(agent_name,'') AS agent_name, ifnull(killed,0) AS killed, HEX(raw_summary) AS hex_raw FROM conversation_summaries ORDER BY last_modified_time DESC;`;
     const out = execSync(`"${sqliteBin}" "${summariesDb}" -json "${sql}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
@@ -327,6 +501,12 @@ function getConversationSummaries(summariesDb, sqliteBin) {
       const parentId = map[id].parentConversationId;
       if (parentId && map[parentId]) map[id].parentTitle = map[parentId].title;
     }
+    summariesCache = {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      walSignature: walSig,
+      map
+    };
     return map;
   } catch (err) {
     // Fallback if -json is unsupported in ancient sqlite3 versions
@@ -389,11 +569,375 @@ function getConversationSummaries(summariesDb, sqliteBin) {
         const parentId = map[id].parentConversationId;
         if (parentId && map[parentId]) map[id].parentTitle = map[parentId].title;
       }
+      summariesCache = {
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+        walSignature: walSig,
+        map
+      };
       return map;
     } catch {
       return null;
     }
   }
+}
+
+function parseInnerSummary(buf) {
+  let offset = 0;
+  let title = '';
+  let stepCount = 0;
+  let lastModified = '';
+  const wsUris = [];
+  while (offset < buf.length) {
+    const k = readVarint(buf, offset);
+    if (!k) break;
+    offset = k.nextOffset;
+    const tag = Number(k.val >> 3n);
+    const wire = Number(k.val & 7n);
+    if (wire === 2) {
+      const l = readVarint(buf, offset);
+      if (!l) break;
+      offset = l.nextOffset;
+      const len = safeVarintNumber(l.val);
+      if (len === null || offset + len > buf.length) break;
+      const slice = buf.slice(offset, offset + len);
+      offset += len;
+      if (tag === 1) {
+        title = slice.toString('utf8').trim();
+      } else if (tag === 3) {
+        let to = 0;
+        let sec = 0;
+        while (to < slice.length) {
+          const tk = readVarint(slice, to);
+          if (!tk) break;
+          to = tk.nextOffset;
+          const ttag = Number(tk.val >> 3n);
+          const twire = Number(tk.val & 7n);
+          if (twire === 0) {
+            const tv = readVarint(slice, to);
+            if (!tv) break;
+            to = tv.nextOffset;
+            if (ttag === 1) sec = safeVarintNumber(tv.val) || 0;
+          } else if (twire === 2) {
+            const tl = readVarint(slice, to);
+            if (!tl) break;
+            to = tl.nextOffset + (safeVarintNumber(tl.val) || 0);
+          }
+        }
+        if (sec > 0) {
+          lastModified = new Date(sec * 1000).toISOString();
+        }
+      } else if (tag === 9) {
+        let wso = 0;
+        while (wso < slice.length) {
+          const wsk = readVarint(slice, wso);
+          if (!wsk) break;
+          wso = wsk.nextOffset;
+          const wstag = Number(wsk.val >> 3n);
+          const wswire = Number(wsk.val & 7n);
+          if (wswire === 2) {
+            const wsl = readVarint(slice, wso);
+            if (!wsl) break;
+            wso = wsl.nextOffset;
+            const wslen = safeVarintNumber(wsl.val) || 0;
+            const wsslice = slice.slice(wso, wso + wslen);
+            wso += wslen;
+            if (wstag === 1) {
+              const u = wsslice.toString('utf8');
+              if (u.startsWith('file://')) wsUris.push(u);
+            }
+          } else if (wswire === 0) {
+            const wv = readVarint(slice, wso);
+            if (!wv) break;
+            wso = wv.nextOffset;
+          }
+        }
+      } else if (tag === 17 || tag === 21) {
+        const uris = extractInDbWorkspaces(slice);
+        for (const u of uris) wsUris.push(u);
+      }
+    } else if (wire === 0) {
+      const v = readVarint(buf, offset);
+      if (!v) break;
+      offset = v.nextOffset;
+      if (tag === 2) stepCount = safeVarintNumber(v.val) || 0;
+    }
+  }
+  return {
+    title,
+    stepCount,
+    lastModified,
+    workspaceUris: JSON.stringify(Array.from(new Set(wsUris)))
+  };
+}
+
+function parseVscdbTrajectorySummaries(buf) {
+  const map = {};
+  let offset = 0;
+  while (offset < buf.length) {
+    const k = readVarint(buf, offset);
+    if (!k) break;
+    offset = k.nextOffset;
+    const tag = Number(k.val >> 3n);
+    const wire = Number(k.val & 7n);
+    if (wire === 2) {
+      const lenObj = readVarint(buf, offset);
+      if (!lenObj) break;
+      offset = lenObj.nextOffset;
+      const len = safeVarintNumber(lenObj.val);
+      if (len === null || offset + len > buf.length) break;
+      const itemSlice = buf.slice(offset, offset + len);
+      offset += len;
+      if (tag === 1) {
+        let cId = '';
+        let innerBase64 = '';
+        let io = 0;
+        while (io < itemSlice.length) {
+          const ik = readVarint(itemSlice, io);
+          if (!ik) break;
+          io = ik.nextOffset;
+          const itag = Number(ik.val >> 3n);
+          const iwire = Number(ik.val & 7n);
+          if (iwire === 2) {
+            const ilenObj = readVarint(itemSlice, io);
+            if (!ilenObj) break;
+            io = ilenObj.nextOffset;
+            const ilen = safeVarintNumber(ilenObj.val) || 0;
+            const islice = itemSlice.slice(io, io + ilen);
+            io += ilen;
+            if (itag === 1) {
+              cId = islice.toString('utf8');
+            } else if (itag === 2) {
+              let c2o = 0;
+              while (c2o < islice.length) {
+                const c2k = readVarint(islice, c2o);
+                if (!c2k) break;
+                c2o = c2k.nextOffset;
+                const c2tag = Number(c2k.val >> 3n);
+                const c2wire = Number(c2k.val & 7n);
+                if (c2wire === 2) {
+                  const c2lenObj = readVarint(islice, c2o);
+                  if (!c2lenObj) break;
+                  c2o = c2lenObj.nextOffset;
+                  const c2len = safeVarintNumber(c2lenObj.val) || 0;
+                  const c2slice = islice.slice(c2o, c2o + c2len);
+                  c2o += c2len;
+                  if (c2tag === 1) innerBase64 = c2slice.toString('utf8');
+                } else if (c2wire === 0) {
+                  const v = readVarint(islice, c2o);
+                  if (!v) break;
+                  c2o = v.nextOffset;
+                }
+              }
+            }
+          } else if (iwire === 0) {
+            const v = readVarint(itemSlice, io);
+            if (!v) break;
+            io = v.nextOffset;
+          }
+        }
+        if (cId && innerBase64) {
+          try {
+            const innerBuf = Buffer.from(innerBase64, 'base64');
+            const summary = parseInnerSummary(innerBuf);
+            if (summary) {
+              map[cId] = { id: cId, ...summary };
+            }
+          } catch {}
+        }
+      }
+    } else if (wire === 0) {
+      const v = readVarint(buf, offset);
+      if (!v) break;
+      offset = v.nextOffset;
+    }
+  }
+  return map;
+}
+
+function getVscdbSummaries(vscdbPath, sqliteBin) {
+  if (!vscdbPath || !sqliteBin) return null;
+  let stat = null;
+  try {
+    stat = fs.statSync(vscdbPath);
+  } catch {
+    return null;
+  }
+
+  if (vscdbCache.map &&
+      vscdbCache.mtimeMs === stat.mtimeMs &&
+      vscdbCache.size === stat.size) {
+    return vscdbCache.map;
+  }
+
+  try {
+    const sql = "SELECT value FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.trajectorySummaries';";
+    const out = execSync(`"${sqliteBin}" "${vscdbPath}" "${sql}"`, { maxBuffer: 32 * 1024 * 1024 }).toString().trim();
+    if (!out) return {};
+    const buf = Buffer.from(out, 'base64');
+    const rawMap = parseVscdbTrajectorySummaries(buf);
+    const map = {};
+    for (const [id, s] of Object.entries(rawMap)) {
+      const wsInfo = parseWorkspaceInfo(s.workspaceUris);
+      map[id] = {
+        id,
+        title: s.title || 'Untitled Conversation',
+        stepCount: s.stepCount || 0,
+        lastModified: s.lastModified || stat.mtime.toISOString(),
+        workspaceUris: s.workspaceUris || '',
+        workspacePaths: wsInfo.workspacePaths,
+        workspaceName: wsInfo.workspaceName,
+        parentConversationId: '',
+        nestingDepth: 0,
+        agentName: '',
+        agentRole: '',
+        isSubagent: false,
+        killed: false,
+        source: 'ide'
+      };
+    }
+    vscdbCache = {
+      mtimeMs: stat.mtimeMs,
+      size: stat.size,
+      map
+    };
+    return map;
+  } catch {
+    return null;
+  }
+}
+
+function extractInDbWorkspaces(buf) {
+  const wsUris = [];
+  let offset = 0;
+  while (offset < buf.length) {
+    const k = readVarint(buf, offset);
+    if (!k) break;
+    offset = k.nextOffset;
+    const tag = Number(k.val >> 3n);
+    const wire = Number(k.val & 7n);
+    if (wire === 2) {
+      const l = readVarint(buf, offset);
+      if (!l) break;
+      offset = l.nextOffset;
+      const len = safeVarintNumber(l.val);
+      if (len === null || offset + len > buf.length) break;
+      const slice = buf.slice(offset, offset + len);
+      offset += len;
+      if (tag === 1) {
+        let io = 0;
+        while (io < slice.length) {
+          const ik = readVarint(slice, io);
+          if (!ik) break;
+          io = ik.nextOffset;
+          const itag = Number(ik.val >> 3n);
+          const iwire = Number(ik.val & 7n);
+          if (iwire === 2) {
+            const il = readVarint(slice, io);
+            if (!il) break;
+            io = il.nextOffset;
+            const ilen = safeVarintNumber(il.val) || 0;
+            const islice = slice.slice(io, io + ilen);
+            io += ilen;
+            if (itag === 1) {
+              const u = islice.toString('utf8');
+              if (u.startsWith('file://')) wsUris.push(u);
+            }
+          } else if (iwire === 0) {
+            const iv = readVarint(slice, io);
+            if (!iv) break;
+            io = iv.nextOffset;
+          }
+        }
+      } else if (tag === 7) {
+        const u = slice.toString('utf8');
+        if (u.startsWith('file://')) wsUris.push(u);
+      }
+    } else if (wire === 0) {
+      const v = readVarint(buf, offset);
+      if (!v) break;
+      offset = v.nextOffset;
+    }
+  }
+  return Array.from(new Set(wsUris));
+}
+
+function extractInDbPrompt(buf) {
+  let offset = 0;
+  while (offset < buf.length) {
+    const k = readVarint(buf, offset);
+    if (!k) break;
+    offset = k.nextOffset;
+    const tag = Number(k.val >> 3n);
+    const wire = Number(k.val & 7n);
+    if (wire === 2) {
+      const l = readVarint(buf, offset);
+      if (!l) break;
+      offset = l.nextOffset;
+      const len = safeVarintNumber(l.val);
+      if (len === null || offset + len > buf.length) break;
+      const slice = buf.slice(offset, offset + len);
+      offset += len;
+      if (tag === 19) {
+        let io = 0;
+        while (io < slice.length) {
+          const ik = readVarint(slice, io);
+          if (!ik) break;
+          io = ik.nextOffset;
+          const itag = Number(ik.val >> 3n);
+          const iwire = Number(ik.val & 7n);
+          if (iwire === 2) {
+            const il = readVarint(slice, io);
+            if (!il) break;
+            io = il.nextOffset;
+            const ilen = safeVarintNumber(il.val) || 0;
+            const islice = slice.slice(io, io + ilen);
+            io += ilen;
+            if (itag === 2) {
+              return islice.toString('utf8').trim();
+            }
+          } else if (iwire === 0) {
+            const iv = readVarint(slice, io);
+            if (!iv) break;
+            io = iv.nextOffset;
+          }
+        }
+      }
+    } else if (wire === 0) {
+      const v = readVarint(buf, offset);
+      if (!v) break;
+      offset = v.nextOffset;
+    }
+  }
+  return '';
+}
+
+function extractInDbMetadata(dbPath, sqliteBin) {
+  let wsUris = [];
+  let prompt = '';
+  try {
+    const sql = "SELECT (SELECT hex(data) FROM trajectory_metadata_blob WHERE id='main') AS hex_ws, (SELECT hex(step_payload) FROM steps WHERE idx=0) AS hex_step;";
+    const out = execSync(`"${sqliteBin}" "${dbPath}" -json "${sql}"`, { maxBuffer: 32 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true }).toString().trim();
+    if (out) {
+      const rows = JSON.parse(out);
+      if (rows && rows[0]) {
+        if (rows[0].hex_ws) wsUris = extractInDbWorkspaces(Buffer.from(rows[0].hex_ws, 'hex'));
+        if (rows[0].hex_step) prompt = extractInDbPrompt(Buffer.from(rows[0].hex_step, 'hex'));
+      }
+    }
+  } catch {}
+
+  const wsRaw = JSON.stringify(wsUris);
+  const wsInfo = parseWorkspaceInfo(wsRaw);
+  let cleanTitle = prompt ? prompt.replace(/[\r\n]+/g, ' ').trim() : '';
+  if (cleanTitle.length > 80) cleanTitle = cleanTitle.slice(0, 77) + '...';
+
+  return {
+    title: cleanTitle || 'Active Session',
+    workspaceUris: wsRaw,
+    workspacePaths: wsInfo.workspacePaths,
+    workspaceName: wsInfo.workspaceName
+  };
 }
 
 
@@ -410,7 +954,7 @@ function numField(fieldMap, tag) {
 // was rewritten, in which case the running totals must be rebuilt from scratch.
 function queryNewRows(sqliteBin, dbPath, lastIdx) {
   const sql = `SELECT count(*) || '#' || ifnull(max(idx),-1) FROM gen_metadata; SELECT idx, quote(data) FROM gen_metadata WHERE idx > ${lastIdx} ORDER BY idx ASC;`;
-  const out = execSync(`"${sqliteBin}" "${dbPath}" "${sql}"`, { maxBuffer: 128 * 1024 * 1024 }).toString();
+  const out = execSync(`"${sqliteBin}" "${dbPath}" "${sql}"`, { maxBuffer: 128 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'] }).toString();
   const lines = out.split('\n').filter(l => l.trim().length > 0);
 
   let structural = null;
@@ -449,7 +993,7 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
   } else {
     let rawOut = '';
     try {
-      rawOut = execSync(`"${sqliteBin}" "${dbPath}" "SELECT idx, quote(data) FROM gen_metadata ORDER BY idx ASC;"`, { maxBuffer: 128 * 1024 * 1024 }).toString();
+      rawOut = execSync(`"${sqliteBin}" "${dbPath}" "SELECT idx, quote(data) FROM gen_metadata ORDER BY idx ASC;"`, { maxBuffer: 128 * 1024 * 1024, stdio: ['pipe', 'pipe', 'ignore'] }).toString();
     } catch {
       return null;
     }
@@ -553,15 +1097,6 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     if (output > peakOutput) peakOutput = output;
     if (thinking > peakThinking) peakThinking = thinking;
 
-    let turnCompacted = false;
-    let turnCompactedAmt = 0;
-    if (prevContext > 0 && effectiveContext < prevContext - 10000) {
-      isCompacted = true;
-      turnCompacted = true;
-      turnCompactedAmt = prevContext - effectiveContext;
-      compactionsCount++;
-      compactedAmount = turnCompactedAmt;
-    }
     prevContext = effectiveContext;
 
     totalNonCached += nonCached;
@@ -585,8 +1120,8 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
       output,
       thinking,
       response: resp,
-      isCompacted: turnCompacted,
-      compactedAmount: turnCompactedAmt
+      isCompacted: false,
+      compactedAmount: 0
     };
 
     if (firstContext === null) firstContext = effectiveContext;
@@ -606,9 +1141,52 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
       fresh: nonCached,
       output,
       thinking,
-      isCompacted: turnCompacted,
-      compactedAmount: turnCompactedAmt
+      isCompacted: false,
+      compactedAmount: 0
     });
+  }
+
+  // Reconcile true compactions across the full contextTimeline:
+  // Antigravity IDE prunes tool output during intermediate planner steps between sub-trajectories,
+  // creating transient single-turn V-dips (e.g. ~116k -> ~82k -> ~124k) that rebound on the next turn.
+  // True session compactions are sustained drops (resetting context back to ~20k-40k at ceiling).
+  compactionsCount = 0;
+  compactedAmount = 0;
+  isCompacted = false;
+
+  for (let i = 0; i < contextTimeline.length; i++) {
+    const curr = contextTimeline[i];
+    const prev = i > 0 ? contextTimeline[i - 1] : null;
+    let turnCompacted = false;
+    let turnCompactedAmt = 0;
+
+    if (prev && prev.input > 0 && curr.input < prev.input - 10000) {
+      const drop = prev.input - curr.input;
+      const next1 = i + 1 < contextTimeline.length ? contextTimeline[i + 1] : null;
+      const next2 = i + 2 < contextTimeline.length ? contextTimeline[i + 2] : null;
+      // If a subsequent turn within 2 turns rebounds back to >= 85% of pre-drop context,
+      // it was a transient planner dip, NOT a true session compaction.
+      const isTransient = Boolean(
+        (next1 && next1.input >= prev.input * 0.85) ||
+        (next2 && next2.input >= prev.input * 0.85)
+      );
+      if (!isTransient) {
+        turnCompacted = true;
+        turnCompactedAmt = drop;
+        compactionsCount++;
+        compactedAmount = drop;
+        isCompacted = true;
+      }
+    }
+
+    curr.isCompacted = turnCompacted;
+    curr.compactedAmount = turnCompactedAmt;
+  }
+
+  if (lastTurn && contextTimeline.length > 0) {
+    const lastItem = contextTimeline[contextTimeline.length - 1];
+    lastTurn.isCompacted = lastItem.isCompacted;
+    lastTurn.compactedAmount = lastItem.compactedAmount;
   }
 
   const totalInput = totalNonCached + totalCached;
@@ -667,7 +1245,6 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
 
 function getDirSize(dir) {
   let size = 0;
-  if (!fs.existsSync(dir)) return 0;
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const e of entries) {
@@ -682,8 +1259,20 @@ function getDirSize(dir) {
   return size;
 }
 
-function getConversationStorageSize(id) {
-  const { antigravityDir, convDir } = getAntigravityPaths();
+function findRootForConversation(id) {
+  const roots = getInstallationRoots('both');
+  for (const r of roots) {
+    if (fs.existsSync(path.join(r.convDir, `${id}.db`))) {
+      return r;
+    }
+  }
+  return roots[0];
+}
+
+function getConversationStorageSize(id, customDir) {
+  const root = customDir ? { antigravityDir: customDir, convDir: path.join(customDir, 'conversations') } : findRootForConversation(id);
+  const antigravityDir = root.antigravityDir;
+  const convDir = root.convDir;
   let total = 0;
   const dbPath = path.join(convDir, `${id}.db`);
   const walPath = path.join(convDir, `${id}.db-wal`);
@@ -694,9 +1283,7 @@ function getConversationStorageSize(id) {
   const impPath = path.join(antigravityDir, 'implicit', `${id}.pb`);
 
   for (const p of [dbPath, walPath, shmPath, annPath, impPath]) {
-    if (fs.existsSync(p)) {
-      try { total += fs.statSync(p).size; } catch { }
-    }
+    try { total += fs.statSync(p).size; } catch { }
   }
   total += getDirSize(brainPath);
   total += getDirSize(browserPath);
@@ -710,8 +1297,10 @@ function validateConversationId(conversationId) {
 }
 
 // Every on-disk layer a conversation owns. Mirrors the layout documented in AGENTS.md.
-function collectConversationTargets(id) {
-  const { antigravityDir, convDir } = getAntigravityPaths();
+function collectConversationTargets(id, customDir) {
+  const root = customDir ? { antigravityDir: customDir, convDir: path.join(customDir, 'conversations') } : findRootForConversation(id);
+  const antigravityDir = root.antigravityDir;
+  const convDir = root.convDir;
   const candidates = [
     { path: path.join(convDir, `${id}.db`), kind: 'file' },
     { path: path.join(convDir, `${id}.db-wal`), kind: 'file' },
@@ -786,7 +1375,7 @@ function recyclePaths(items) {
  * DB otherwise leaves an orphaned "ghost" catalog entry behind).
  *
  * @param {string} conversationId  UUID of the conversation.
- * @param {{recycleBin?: boolean}} [options]  Defaults to the Recycle Bin for recoverability.
+ * @param {{recycleBin?: boolean, rootDir?: string}} [options]  Defaults to the Recycle Bin for recoverability.
  */
 function deleteConversation(conversationId, options = {}) {
   const safeId = validateConversationId(conversationId);
@@ -795,12 +1384,14 @@ function deleteConversation(conversationId, options = {}) {
   }
 
   const useRecycleBin = options.recycleBin !== false;
-  const { summariesDb } = getAntigravityPaths();
+  const root = options.rootDir
+    ? { antigravityDir: options.rootDir, convDir: path.join(options.rootDir, 'conversations'), summariesDb: path.join(options.rootDir, 'conversation_summaries.db') }
+    : findRootForConversation(safeId);
   const sqliteBin = getSqliteBinary();
   if (!sqliteBin) {
     throw new Error('sqlite3 executable not found. Configure antigravity.sqlitePath in settings.');
   }
-  const targets = collectConversationTargets(safeId);
+  const targets = collectConversationTargets(safeId, root.antigravityDir);
   const deletedItems = [];
   const failures = [];
   let freedBytes = 0;
@@ -835,10 +1426,11 @@ function deleteConversation(conversationId, options = {}) {
     }
   }
 
-  const dbTarget = targets.find(t => t.path === path.join(getAntigravityPaths().convDir, `${safeId}.db`));
+  const dbTarget = targets.find(t => t.path === path.join(root.convDir, `${safeId}.db`));
   const databaseRemoved = Boolean(dbTarget) && !fs.existsSync(dbTarget.path);
 
   // 3. Only touch the catalog when the whole conversation was removed.
+  const summariesDb = root.summariesDb || path.join(root.antigravityDir, 'conversation_summaries.db');
   if (failures.length === 0 && fs.existsSync(summariesDb)) {
     try {
       const out = execSync(`"${sqliteBin}" "${summariesDb}" "DELETE FROM conversation_summaries WHERE conversation_id = '${safeId}'; SELECT changes();"`, { maxBuffer: 1024 * 1024 }).toString();
@@ -909,53 +1501,102 @@ function walSignatureOf(dbPath) {
   }
 }
 
-function readAllTelemetry() {
-  const { convDir, summariesDb } = getAntigravityPaths();
-  if (!fs.existsSync(convDir)) {
-    return { conversations: [], active: null, catalogAvailable: true, sqliteAvailable: getSqliteBinary() !== null };
+function readAllTelemetry(options = {}) {
+  const force = Boolean(options && options.force);
+  if (force) {
+    summariesCache = { mtimeMs: 0, size: 0, walSignature: '', map: null };
+    vscdbCache = { mtimeMs: 0, size: 0, map: null };
   }
-
+  const dataSource = (options && options.dataSource) || currentDataSource;
+  const roots = getInstallationRoots(dataSource, options && options.hostEditor);
   const sqliteBin = getSqliteBinary();
+
   // A missing CLI is reported explicitly so the UI can say so, rather than showing "no chats".
   if (!sqliteBin) {
     return { conversations: [], active: null, catalogAvailable: false, sqliteAvailable: false };
   }
-  const summaryMap = getConversationSummaries(summariesDb, sqliteBin);
-  // null means "unreadable", which must not be mistaken for "no chats have summaries" —
-  // that would flag every healthy conversation as an orphan.
-  const catalogAvailable = summaryMap !== null;
-  const catalog = summaryMap || {};
+
+  let overallCatalogAvailable = false;
+  const catalog = {};
+
+  for (const root of roots) {
+    let rootCatalog = null;
+    if (root.summariesDb && fs.existsSync(root.summariesDb)) {
+      rootCatalog = getConversationSummaries(root.summariesDb, sqliteBin);
+      if (rootCatalog !== null) {
+        overallCatalogAvailable = true;
+        Object.assign(catalog, rootCatalog);
+      }
+    }
+    if (root.stateVscdb && fs.existsSync(root.stateVscdb)) {
+      const vscdbMap = getVscdbSummaries(root.stateVscdb, sqliteBin);
+      if (vscdbMap !== null) {
+        overallCatalogAvailable = true;
+        for (const [id, s] of Object.entries(vscdbMap)) {
+          if (!catalog[id]) catalog[id] = s;
+        }
+      }
+    }
+  }
+
+  const catalogAvailable = overallCatalogAvailable;
   const now = Date.now();
+  const fileEntries = [];
 
-  const dbFiles = fs.readdirSync(convDir).filter(f => f.endsWith('.db'));
-  const convStatsList = [];
-  const seen = new Set();
-
-  let mostRecentFile = null;
-  let mostRecentTime = 0;
-
-  for (const f of dbFiles) {
-    const fullPath = path.join(convDir, f);
-    const cId = f.replace(/\.db$/, '');
-    seen.add(cId);
-
-    let stat;
+  for (const root of roots) {
+    if (!fs.existsSync(root.convDir)) continue;
+    let dbFiles = [];
     try {
-      stat = fs.statSync(fullPath);
+      dbFiles = fs.readdirSync(root.convDir).filter(f => f.endsWith('.db'));
     } catch {
       continue;
     }
-
-    if (stat.mtimeMs > mostRecentTime) {
-      mostRecentTime = stat.mtimeMs;
-      mostRecentFile = cId;
+    for (const f of dbFiles) {
+      const fullPath = path.join(root.convDir, f);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (stat.size === 0) continue;
+        let mtimeMs = stat.mtimeMs;
+        let walSignature = '';
+        const walPath = `${fullPath}-wal`;
+        try {
+          const walStat = fs.statSync(walPath);
+          walSignature = `${walStat.mtimeMs}:${walStat.size}`;
+          if (walStat.mtimeMs > mtimeMs) {
+            mtimeMs = walStat.mtimeMs;
+          }
+        } catch {}
+        fileEntries.push({ f, fullPath, cId: f.replace(/\.db$/, ''), stat, mtimeMs, walSignature, root });
+      } catch { }
     }
+  }
+
+  if (fileEntries.length === 0) {
+    return { conversations: [], active: null, catalogAvailable, sqliteAvailable: true };
+  }
+
+  // Deduplicate conversations present in multiple roots: prefer newer mtime
+  const byId = new Map();
+  for (const entry of fileEntries) {
+    const existing = byId.get(entry.cId);
+    if (!existing || entry.mtimeMs > existing.mtimeMs) {
+      byId.set(entry.cId, entry);
+    }
+  }
+
+  const dedupedEntries = Array.from(byId.values());
+  dedupedEntries.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  const convStatsList = [];
+  const seen = new Set();
+
+  for (const { fullPath, cId, stat, mtimeMs, walSignature, root } of dedupedEntries) {
+    seen.add(cId);
 
     // ---- analysis: reuse the cache unless this conversation actually changed ----
     const entry = analysisCache.get(cId);
     // A live WAL is where writes land, so it is part of the freshness signature even though
     // the main .db mtime/size may be untouched.
-    const walSignature = walSignatureOf(fullPath);
     const changed = !entry
       || entry.mtimeMs !== stat.mtimeMs
       || entry.size !== stat.size
@@ -964,10 +1605,10 @@ function readAllTelemetry() {
     const shrank = Boolean(entry && stat.size < entry.size);
 
     let stats = null;
-    if (entry && !changed) {
+    if (entry && !changed && !force) {
       stats = entry.stats; // zero sqlite3 spawns
     } else {
-      stats = analyzeConversation(fullPath, sqliteBin, shrank ? null : (entry ? entry.stats : null));
+      stats = analyzeConversation(fullPath, sqliteBin, (shrank || force) ? null : (entry ? entry.stats : null));
       if (!stats && entry) stats = entry.stats; // keep the last good reading
       if (!stats) continue;
       analysisCache.set(cId, {
@@ -976,7 +1617,8 @@ function readAllTelemetry() {
         walSignature,
         stats,
         storageBytes: entry ? entry.storageBytes : null,
-        storageCheckedAt: entry ? entry.storageCheckedAt : 0
+        storageCheckedAt: entry ? entry.storageCheckedAt : 0,
+        inDbMetadata: entry ? entry.inDbMetadata : null
       });
     }
 
@@ -990,28 +1632,71 @@ function readAllTelemetry() {
       || (changed && storageAge > STORAGE_TTL_MS);
 
     if (needsStorageWalk) {
-      cacheEntry.storageBytes = getConversationStorageSize(cId);
+      cacheEntry.storageBytes = getConversationStorageSize(cId, root.antigravityDir);
       cacheEntry.storageCheckedAt = now;
     }
 
     const storageBytes = cacheEntry.storageBytes || 0;
     const hasSummary = Boolean(catalog[cId]);
-    const summary = catalog[cId] || {
-      id: cId,
-      title: catalogAvailable ? 'Dead Ghost Chat (Deleted in Antigravity)' : 'Untitled Conversation (catalog unreadable)',
-      stepCount: 0,
-      lastModified: stat.mtime.toISOString(),
-      workspaceUris: '',
-      workspacePaths: [],
-      workspaceName: ''
-    };
+
+    // Fallback: in-db metadata extraction for active or uncataloged chats
+    let inDbMeta = cacheEntry.inDbMetadata;
+    const hasActiveWal = fs.existsSync(`${fullPath}-wal`);
+    const isRecentlyActive = hasActiveWal || (now - stat.mtimeMs < 24 * 60 * 60 * 1000);
+
+    if (!hasSummary) {
+      if (!inDbMeta || changed) {
+        inDbMeta = extractInDbMetadata(fullPath, sqliteBin);
+        cacheEntry.inDbMetadata = inDbMeta;
+      }
+    }
+
+    let summary;
+    let isOrphan = false;
+
+    if (hasSummary) {
+      summary = catalog[cId];
+      isOrphan = false;
+    } else if (isRecentlyActive || (inDbMeta && inDbMeta.workspacePaths && inDbMeta.workspacePaths.length > 0)) {
+      summary = {
+        id: cId,
+        title: (inDbMeta && inDbMeta.title) ? inDbMeta.title : 'Active Session',
+        stepCount: stats.calls || 0,
+        lastModified: stat.mtime.toISOString(),
+        workspaceUris: (inDbMeta && inDbMeta.workspaceUris) || '',
+        workspacePaths: (inDbMeta && inDbMeta.workspacePaths) || [],
+        workspaceName: (inDbMeta && inDbMeta.workspaceName) || '',
+        parentConversationId: '',
+        nestingDepth: 0,
+        agentName: '',
+        agentRole: '',
+        isSubagent: false,
+        killed: false,
+        source: root.id
+      };
+      isOrphan = false;
+    } else {
+      summary = {
+        id: cId,
+        title: catalogAvailable ? 'Dead Ghost Chat (Deleted in Antigravity)' : 'Untitled Conversation (catalog unreadable)',
+        stepCount: 0,
+        lastModified: stat.mtime.toISOString(),
+        workspaceUris: (inDbMeta && inDbMeta.workspaceUris) || '',
+        workspacePaths: (inDbMeta && inDbMeta.workspacePaths) || [],
+        workspaceName: (inDbMeta && inDbMeta.workspaceName) || '',
+        source: root.id
+      };
+      isOrphan = catalogAvailable;
+    }
 
     convStatsList.push({
       ...summary,
-      isOrphan: catalogAvailable && !hasSummary,
+      isOrphan,
       storageBytes,
       storageMB: (storageBytes / (1024 * 1024)).toFixed(1),
-      mtimeMs: stat.mtimeMs,
+      mtimeMs,
+      source: root.id,
+      rootDir: root.antigravityDir,
       stats: withLatestTimeline(stats)
     });
   }
@@ -1036,7 +1721,8 @@ function readAllTelemetry() {
 
 module.exports = {
   readAllTelemetry,
-  getAntigravityPaths,
+  getInstallationRoots,
+  setDataSource,
   getConversationStorageSize,
   deleteConversation,
   parseWorkspaceInfo,
@@ -1044,12 +1730,19 @@ module.exports = {
   selectActiveConversation,
   getSqliteBinary,
   setCustomSqlitePath,
+  dumpAnalysisCache,
+  loadAnalysisCache,
   // exposed for tooling / self-check scripts
   analyzeConversation,
   parseProto,
   validateConversationId,
   clearAnalysisCache,
   recyclePaths,
-  extractSubagentRole
+  extractSubagentRole,
+  getVscdbSummaries,
+  parseVscdbTrajectorySummaries,
+  extractInDbWorkspaces,
+  extractInDbPrompt,
+  extractInDbMetadata
 };
 

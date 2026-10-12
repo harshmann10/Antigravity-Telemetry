@@ -3,6 +3,68 @@
 Technical and architectural notes for Antigravity Telemetry, grouped by development and review phases.
 For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 
+## 2026-10-11 — Phase 4: Antigravity IDE & Multi-Root Telemetry Support (Issue #1)
+
+**Task 1 — Host-Aware Installation Discovery & User Configuration**
+- Added `getInstallationRoots(preference, hostEditor)` resolving `%USERPROFILE%\.gemini\antigravity-ide` (`ide`) alongside `%USERPROFILE%\.gemini\antigravity` (`extension`), with auto-detection of the active editor to eliminate cross-environment clutter.
+- Added `antigravity.dataSource` configuration (`auto`, `ide`, `extension`, `both`) to `package.json` with an interactive switch picker in the QuickPick status menu.
+- Unified multi-root directory discovery with deduplication by conversation modification timestamp.
+
+**Task 2 — Antigravity IDE State Store Catalog Extraction (`state.vscdb`)**
+- Located IDE session summaries in `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb` under key `antigravityUnifiedStateSync.trajectorySummaries`.
+- Built Base64 + Protobuf decoder (`parseVscdbTrajectorySummaries`, `getVscdbSummaries`) extracting conversation UUIDs, titles, step counts, timestamps, and workspace mappings.
+- Added file modification and size caching (`vscdbCache`) to prevent redundant `sqlite3` queries on heartbeats.
+
+**Task 3 — In-DB Self-Description Fallback for Live Sessions**
+- Resolved live/in-flight session visibility before disk catalog commits.
+- Decoded `<id>.db`'s `trajectory_metadata_blob` (`id = 'main'`, Tag 1 $\rightarrow$ Tag 7) for workspace URIs.
+- Decoded `<id>.db`'s `steps` table (`idx = 0`, Tag 19 $\rightarrow$ Tag 2) for initial prompt/title fallback.
+- Prevented active conversations from being flagged as ghost chats or filtered out by workspace scoping.
+
+**Task 4 — Multi-Root File Watchers & Zero-Residue Deletion**
+- Updated `extension.js` to watch conversation directories across all detected roots and `state.vscdb` in `globalStorage`.
+- Enhanced `deleteConversation()` with root discovery (`findRootForConversation`) ensuring all 7 storage layers are cleaned up across the correct installation directory.
+
+**Task 5 — Transient Planner V-Dip Filtering & Compaction Qualification**
+- Diagnosed single-turn transient context notches in Antigravity IDE caused by intermediate planner execution boundaries where tool outputs are temporarily pruned.
+- Added reconciliation in `telemetryReader.js` (`contextTimeline`) to distinguish transient dips that rebound within 2 turns from sustained session compactions that reset working memory near ceiling.
+- Added Section 1c to `scripts/self-check.js` validating transient notch filtering vs. true compaction detection (177 tests total).
+
+**Task 6 — Forced Un-Cached Manual Refresh & UI Fluctuation Stability**
+- Added `{ force = false }` option to `readAllTelemetry()`, bypassing `entry && !changed` to force a complete re-read from SQLite and recalculate stats from scratch.
+- Connected dashboard `refresh` command and `antigravity.refresh` command to trigger `updateTelemetry({ force: true })`.
+- Factored live `-wal` modification time in conversation sorting (`Math.max(stat.mtimeMs, walStat.mtimeMs)`) to prevent in-flight sessions from fluctuating in list order.
+- Guarded status bar tooltip/color updates and dashboard SVG chart re-renders against identical payloads, eliminating hover flickering.
+
+**Task 7 — Open VSX Registry Distribution**
+- Registered namespace `HarshMann` on [Open VSX](https://open-vsx.org/extension/HarshMann/antigravity-telemetry) and published `.vsix`.
+- Added Open VSX installation instructions and status badges to `README.md` and release workflow commands to `AGENTS.md`.
+
+---
+
+## 2026-10-11 — Phase 3: UX Polish, Subagent Decoding & Startup Acceleration
+
+**Task 1 — On-Demand Manual Refresh in Visual Dashboard**
+- Added header `#refreshBtn` with interactive states (`idle`, `syncing`, `updated`) and tactile active feedback (`active:scale-95`).
+- Communicates via `vscode.postMessage({ command: 'refresh' })` to trigger immediate telemetry reload.
+- Synchronous animation handling with spinning SVG icon, disabled spam prevention, and 3-second fallback safety timer.
+- Responsive layout collapses gracefully to icon-only on narrow split views.
+
+**Task 2 — Subagent Role Decoding & Hierarchy Presentation**
+- Decoded protobuf `raw_summary` records (`Tag 17 → Tag 8 → Tag 2`) across both JSON and delimiter catalog fallback paths to extract genuine subagent task roles (e.g. `Icon Designer`, `Research Assistant`), eliminating generic "Untitled Conversation" labels.
+- Added interactive collapsible toggle (`▼ Collapse` / `▶ Expand`) to the subagent breakdown card in the detail view with smooth overflow containment.
+- Extended delimiter fallback parser with full subagent field extraction parity (`parent_conversation_id`, `nesting_depth`, `agent_name`, `killed`, `HEX(raw_summary)`).
+
+**Task 3 — Branding & Asset Polish**
+- Embedded official high-resolution `media/icon.png` into the webview tab title and header brand badge.
+- Added transparent squircle masking preventing "box-in-a-box" double-border artifacts against dark and light themes.
+
+**Task 4 — Instant Startup & Persistent Cache**
+- Implemented `dumpAnalysisCache()` and `loadAnalysisCache()` to serialize in-memory conversation analysis and catalog summaries into VS Code's `context.globalState`.
+- On extension activation, restored cached stats instantly bypass cold sqlite spawns, dropping window reload and startup scan time from **~3,500 ms to ~30–50 ms** (~98% speedup).
+- Added `summariesCache` to validate `conversation_summaries.db` by `(mtimeMs, size, walSignature)`.
+- Streamlined storage walks by eliminating redundant `existsSync` probes before `statSync`/`readdirSync` and sorting conversation inspection by `mtimeMs` descending (most active first).
+
 ---
 
 ## 2026-09-22 — Phase 2: Data Accuracy, Scoping, Configuration
@@ -41,7 +103,6 @@ For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 - Subagent UI polish: descriptions truncated cleanly to 36 chars with hover tooltips, badges adjusted to prevent layout clipping, and table rows de-cluttered.
 - Responsive single-scroll layout: pinned header (`shrink-0`) and responsive list fill (`flex-1 min-h-0`), removing dual-scrollbars on Tab 2.
 - 1:1 timeline fidelity & proportional chart scaling: removed artificial decimation stride so every turn is preserved 1:1 (~70 KB per chat); scaled SVG chart X-axis strictly by turn progress (`pt.turn`), eliminating visual horizontal distortion between early and late compaction cycles.
-- Manual Refresh in Visual Dashboard: Added an on-demand `#refreshBtn` in the dashboard header with tactile feedback, spinning SVG sync animation, temporary "Updated" confirmation upon `telemetryUpdate`, and 3s fallback protection. Wired via `vscode.postMessage({ command: 'refresh' })` to trigger immediate telemetry reload.
 
 ---
 

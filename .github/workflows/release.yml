@@ -81,7 +81,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.tag_info.outputs.tag }}
-          name: Antigravity Telemetry ${{ steps.tag_info.outputs.tag }}
+          name: ${{ steps.tag_info.outputs.tag }} - Antigravity Telemetry
           body_path: release-notes.md
           files: ${{ steps.vsix_asset.outputs.file }}
           draft: ${{ inputs.draft || false }}

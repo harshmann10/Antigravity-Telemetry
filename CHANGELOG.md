@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.0] - 2026-10-12
+
+### 🛸 Standalone Antigravity IDE & Multi-Root Support
+
+> **Major milestone release** adding seamless native support for the standalone **Antigravity IDE**, sub-50ms instant startup caching, intelligent compaction qualification, and zero-flicker vector UI badges.
+
+#### 🛸 Antigravity IDE & Multi-Root Discovery
+- **Host-Aware Auto Routing**: Automatically detects whether you are in VS Code (`~/.gemini/antigravity`) or standalone Antigravity IDE (`~/.gemini/antigravity-ide`) with zero configuration.
+- **Data Source Preference**: Choose `auto`, `ide`, `extension`, or merged `both` mode via settings or the status bar menu.
+- **State Store Catalog Integration**: Decodes session summaries directly from Antigravity IDE's `state.vscdb` store with full title, step, and workspace parity.
+- **Live Session Self-Description**: In-flight sessions are automatically identified directly from conversation databases, preventing false ghost-chat warnings.
+
+#### 🚀 Instant Startup & Performance Architecture
+- **Persistent Cache Across Reloads**: Window reloads drop from ~3,500 ms to **~30–50 ms** (~98% speedup) via serialized `globalState` caching.
+- **Atomic In-DB Queries**: Halved process spawn overhead on Windows by consolidating metadata checks into atomic queries.
+- **Zero-Flicker Vector UI**: Replaced raw OS emojis with crisp SVG badges, and memoized chart rendering so tooltips never jump during polling.
+
+#### 📈 Smarter Timeline & Compaction Tracking
+- **Transient Planner V-Dip Filtering**: Intermediate agent tool-pruning notches are filtered out, ensuring only genuine context-ceiling compactions trigger alerts.
+- **Forced Un-Cached Manual Refresh**: Clicking the header Refresh button now passes `force: true` to bypass all caches and re-query SQLite immediately.
+
+#### 🗑️ Multi-Root Storage Hygiene
+- **Root-Aware Cleanup**: Enhanced safe deletion to wipe all 7 storage layers across either installation with Windows Recycle Bin protection by default.
+- **Open VSX Availability**: Published officially on the [Open VSX Registry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry) for VSCodium, Gitpod, and Coder users.
+
+
+---
+
 ## [1.0.2] - 2026-10-08
 
 ### 🔄 Manual Refresh & Subagent Intelligence
@@ -17,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Responsive Layout**: Automatically collapses to a compact icon-only button on narrow split-editor views to preserve header readability.
 
 #### 🤖 Subagent Role Decoding & Hierarchy
-- **Resolved "Untitled Conversation"**: Decoded protobuf `raw_summary` records (`Tag 17 → Tag 8 → Tag 2`) across both JSON and delimiter catalog fallback paths to extract genuine subagent task roles (e.g., `Icon Designer - Concept 1`, `Research Assistant`), eliminating generic "Untitled Conversation" labels.
+- **Resolved "Untitled Conversation"**: Decoded task records from background worker telemetry across both catalog paths to extract genuine subagent roles (e.g., `Icon Designer`, `Research Assistant`), eliminating generic "Untitled Conversation" labels.
 - **Collapsible Subagents Section**: Added an interactive toggle (`▼ Collapse` / `▶ Expand`) to the subagent breakdown card in the Chat Telemetry detail view with clean animations and scrollable overflow container.
 - **Non-JSON Catalog Parity**: Extended delimiter parsing fallback to support full subagent hierarchy extraction.
 

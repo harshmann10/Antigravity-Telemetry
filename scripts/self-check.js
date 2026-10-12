@@ -181,6 +181,32 @@ function testSynthetic() {
     check('legacy chat compacted amount (25050)', legState && legState.compactedAmount === 25050, legState && legState.compactedAmount);
 
     // -------------------------------------------------------------------------
+    // 1c. transient planner dips vs true compactions
+    // -------------------------------------------------------------------------
+    section('1c. transient planner dips vs true compactions');
+    const vDipDb = createFixtureDb(sqliteBin, path.join(dir, 'vdip.db'), [
+        // Turn 1: Initial context 22400
+        buildRow('test-model-vdip', 10000, 0, 500, 100, 400, 22400, 256000),
+        // Turn 2: Context climbs to 116000
+        buildRow('test-model-vdip', 100, 40000, 200, 50, 150, 116000, 256000),
+        // Turn 3: Transient planner notch dips to 82000 (drop of 34000)
+        buildRow('test-model-vdip', 50, 15000, 100, 20, 80, 82000, 256000),
+        // Turn 4: Context rebounds to 124000 (> 85% of Turn 2)
+        buildRow('test-model-vdip', 100, 20000, 100, 20, 80, 124000, 256000),
+        // Turn 5: Context reaches ceiling 255000
+        buildRow('test-model-vdip', 100, 100000, 200, 50, 150, 255000, 256000),
+        // Turn 6: True session compaction drops to 42000 (drop of 213000)
+        buildRow('test-model-vdip', 50, 10000, 100, 20, 80, 42000, 256000),
+        // Turn 7: Sustained post-compaction context remains low at 46000
+        buildRow('test-model-vdip', 50, 12000, 100, 20, 80, 46000, 256000)
+    ]);
+    const vDipState = reader.analyzeConversation(vDipDb, sqliteBin, null);
+    check('transient notch at turn 3 is not flagged as compaction', vDipState && !vDipState.contextTimeline[2].isCompacted);
+    check('true compaction at turn 6 is flagged as compaction', vDipState && vDipState.contextTimeline[5].isCompacted);
+    check('compactionsCount accurately equals 1 (excluding transient dip)', vDipState && vDipState.compactionsCount === 1, vDipState && vDipState.compactionsCount);
+    check('compactedAmount reflects true compaction drop (213000)', vDipState && vDipState.compactedAmount === 213000, vDipState && vDipState.compactedAmount);
+
+    // -------------------------------------------------------------------------
     // 2. incremental == full
     // -------------------------------------------------------------------------
     section('2. incremental analysis matches a full re-read');
@@ -265,7 +291,8 @@ function testSynthetic() {
 // ---------------------------------------------------------------------------
 function testRealData() {
     section('3. real installation: cache + incremental parity');
-    const { convDir } = reader.getAntigravityPaths();
+    const roots = reader.getInstallationRoots();
+    const convDir = roots && roots[0] ? roots[0].convDir : '';
     if (!fs.existsSync(convDir)) {
         console.log('  SKIP  no Antigravity installation found');
         return;
@@ -299,7 +326,7 @@ function testRealData() {
         if (w && (c.stats.calls !== w.stats.calls || c.stats.lastIdx !== w.stats.lastIdx)) {
             liveIds.add(c.id);
         }
-        const dbPath = path.join(convDir, c.id + '.db');
+        const dbPath = path.join(c.rootDir ? path.join(c.rootDir, 'conversations') : convDir, c.id + '.db');
         try {
             if (fs.statSync(dbPath).mtimeMs >= testStartTime) liveIds.add(c.id);
         } catch { }
@@ -315,6 +342,20 @@ function testRealData() {
     const jobConvs = cold.conversations.filter(c => c.workspaceName === 'job');
     check('found job conversations (' + jobConvs.length + ')', jobConvs.length > 0, jobConvs.length);
 
+    // cache serialization: dump & restore
+    check('dumpAnalysisCache exported', typeof reader.dumpAnalysisCache === 'function');
+    check('loadAnalysisCache exported', typeof reader.loadAnalysisCache === 'function');
+    const dump = reader.dumpAnalysisCache();
+    check('dumpAnalysisCache exports conversations and summaries', dump && typeof dump.conversations === 'object' && Object.keys(dump.conversations).length > 0 && dump.summaries !== null);
+
+    reader.clearAnalysisCache();
+    reader.loadAnalysisCache(dump);
+    const restoredT0 = Date.now();
+    const restored = reader.readAllTelemetry();
+    const restoredMs = Date.now() - restoredT0;
+    check(`restored cache yields fast read (${restoredMs}ms)`, restoredMs < Math.max(200, coldMs / 4), restoredMs + 'ms');
+    check('restored cache yields identical conversation count', restored.conversations.length === warm.conversations.length);
+
     // incremental parity on a copy of a real conversation (never the original)
     const withRows = cold.conversations
         .filter(c => !c.isOrphan && c.stats.calls > 100)
@@ -322,7 +363,7 @@ function testRealData() {
     if (withRows && sqliteBin) {
         const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-real-'));
         const copy = path.join(dir, 'copy.db');
-        const src = path.join(convDir, withRows.id + '.db');
+        const src = path.join(withRows.rootDir ? path.join(withRows.rootDir, 'conversations') : convDir, withRows.id + '.db');
         try {
             execSync(`"${sqliteBin}" "${src}" "VACUUM INTO '${copy.replace(/\\/g, '/')}';"`, { stdio: 'ignore', maxBuffer: 256 * 1024 * 1024 });
             const total = Number(execSync(`"${sqliteBin}" "${copy}" "SELECT count(*) FROM gen_metadata;"`).toString().trim());
@@ -478,8 +519,8 @@ function testWorkspaceScoping() {
                 if (!elements.has(id)) elements.set(id, makeEl());
                 return elements.get(id);
             },
-            createElement(tag) { return makeEl(); },
-            createElementNS(ns, tag) { return makeEl(); }
+            createElement() { return makeEl(); },
+            createElementNS() { return makeEl(); }
         };
         const sandbox = {
             acquireVsCodeApi: () => ({ postMessage() { } }),
@@ -602,7 +643,7 @@ function testSubagents() {
                     classes: new Set(),
                     add(cls) { this.classes.add(cls); },
                     remove(cls) { this.classes.delete(cls); },
-                    toggle(cls) { }
+                    toggle(cls) { if (this.classes.has(cls)) this.classes.delete(cls); else this.classes.add(cls); }
                 },
                 style: {},
                 setAttribute() { },
@@ -717,7 +758,7 @@ function testDashboardStability() {
                     classes: new Set(),
                     add(...cls) { cls.forEach(c => this.classes.add(c)); },
                     remove(...cls) { cls.forEach(c => this.classes.delete(c)); },
-                    toggle(cls) { }
+                    toggle(cls) { if (this.classes.has(cls)) this.classes.delete(cls); else this.classes.add(cls); }
                 },
                 style: {},
                 setAttribute() { },
@@ -1042,9 +1083,14 @@ function testChangelogExtraction() {
 
     // Default extraction (latest section from user-facing CHANGELOG.md)
     const latest = extractChangelog();
-    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.0.2'), latest.title);
-    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Manual Refresh') && latest.notes.includes('Subagent'), latest.notes.slice(0, 100));
+    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.1.0'), latest.title);
+    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Antigravity IDE') && latest.notes.includes('Multi-Root'), latest.notes.slice(0, 100));
     check('strips trailing horizontal rules', !latest.notes.endsWith('---'));
+
+    // Specific tag extraction (e.g. v1.0.2)
+    const v102 = extractChangelog('v1.0.2');
+    check('extracts specific v1.0.2 section by tag', v102.title.includes('1.0.2'), v102.title);
+    check('v1.0.2 notes contain feature categories', v102.notes.includes('Manual Refresh') && v102.notes.includes('Subagent'));
 
     // Specific tag extraction (e.g. v1.0.1)
     const v101 = extractChangelog('v1.0.1');
@@ -1069,6 +1115,77 @@ function testChangelogExtraction() {
     check('gracefully falls back to top section for unknown tag', fallback.title === latest.title);
 }
 
+// 12. antigravity ide & multi-root catalog support
+function testAntigravityIdeSupport() {
+    section('12. antigravity ide & multi-root catalog support');
+
+    // Export checks
+    check('getInstallationRoots exported', typeof reader.getInstallationRoots === 'function');
+    check('setDataSource exported', typeof reader.setDataSource === 'function');
+    check('parseVscdbTrajectorySummaries exported', typeof reader.parseVscdbTrajectorySummaries === 'function');
+    check('extractInDbWorkspaces exported', typeof reader.extractInDbWorkspaces === 'function');
+    check('extractInDbPrompt exported', typeof reader.extractInDbPrompt === 'function');
+    check('extractInDbMetadata exported', typeof reader.extractInDbMetadata === 'function');
+
+    // Root resolution
+    const rootsAuto = reader.getInstallationRoots('auto');
+    check('auto returns single host root without clutter', Array.isArray(rootsAuto) && rootsAuto.length === 1);
+    const rootsBoth = reader.getInstallationRoots('both');
+    check('both mode resolves installation roots', Array.isArray(rootsBoth) && rootsBoth.length >= 1);
+    const rootsExt = reader.getInstallationRoots('extension');
+    check('extension mode resolves extension root', rootsExt.some(r => r.id === 'extension'));
+    const rootsIde = reader.getInstallationRoots('ide');
+    check('ide mode resolves ide root if present', rootsIde.length >= 0);
+    const rootsAutoIde = reader.getInstallationRoots('auto', 'ide');
+    check('auto with host ide resolves only ide', rootsAutoIde.length === 1 && rootsAutoIde[0].id === 'ide');
+    const rootsAutoExt = reader.getInstallationRoots('auto', 'extension');
+    check('auto with host extension resolves only extension', rootsAutoExt.length === 1 && rootsAutoExt[0].id === 'extension');
+
+    // Synthetic trajectorySummaries decoding (Base64 + double-nested protobuf)
+    const innerSummaryBuf = Buffer.concat([
+        strField(1, 'Synthetic IDE Refactor Plan'),
+        varField(2, 42),
+        lenField(9, Buffer.concat([strField(1, 'file:///g:/web%20dev/antigravity-telemetry')]))
+    ]);
+    const innerBase64 = innerSummaryBuf.toString('base64');
+    const synthConvId = 'a1b2c3d4-e5f6-7a8b-9c0d-1e2f3a4b5c6d';
+    const sessionItem = Buffer.concat([
+        strField(1, synthConvId),
+        lenField(2, Buffer.concat([strField(1, innerBase64)]))
+    ]);
+    const syntheticSummaries = lenField(1, sessionItem);
+
+    const parsedSummaries = reader.parseVscdbTrajectorySummaries(syntheticSummaries);
+    check('synthetic vscdb summaries parsed', Boolean(parsedSummaries[synthConvId]));
+    const item = parsedSummaries[synthConvId];
+    check('synthetic title extracted', item && item.title === 'Synthetic IDE Refactor Plan');
+    check('synthetic stepCount extracted', item && item.stepCount === 42);
+    check('synthetic workspaceUris contains URI', item && item.workspaceUris.includes('antigravity-telemetry'));
+
+    // Synthetic in-db workspaces extraction
+    const synthWsBlob = Buffer.concat([
+        strField(7, 'file:///g:/web%20dev/portfolio'),
+        lenField(1, Buffer.concat([strField(1, 'file:///g:/web%20dev/ContextRAG')]))
+    ]);
+    const wsList = reader.extractInDbWorkspaces(synthWsBlob);
+    check('extractInDbWorkspaces captures repeated tag 1 and tag 7', wsList.length === 2 && wsList.includes('file:///g:/web%20dev/portfolio'));
+
+    // Synthetic in-db prompt extraction
+    const synthStepPayload = lenField(19, Buffer.concat([
+        strField(2, 'Refactor the tokenizer pipeline for performance')
+    ]));
+    const prompt = reader.extractInDbPrompt(synthStepPayload);
+    check('extractInDbPrompt extracts tag 19.tag 2 user prompt', prompt === 'Refactor the tokenizer pipeline for performance');
+
+    // Real multi-root telemetry discovery check
+    const telem = reader.readAllTelemetry({ dataSource: 'auto' });
+    check('readAllTelemetry discovers conversations', Array.isArray(telem.conversations) && telem.conversations.length > 0);
+    check('active conversation resolved', telem.active !== null);
+    check('conversations carry source tag', telem.conversations.some(c => c.source === 'ide' || c.source === 'extension'));
+    check('zero healthy chats falsely flagged as dead ghost chat when in-db workspaces exist',
+        telem.conversations.filter(c => c.workspacePaths && c.workspacePaths.length > 0 && c.isOrphan).length === 0);
+}
+
 // ---------------------------------------------------------------------------
 testSynthetic();
 testRealData();
@@ -1080,6 +1197,7 @@ testDashboardStability();
 testConfigurationAndSqlite();
 testChartLayerIntegrity();
 testChangelogExtraction();
+testAntigravityIdeSupport();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
