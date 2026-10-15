@@ -47,7 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 🗑️ Multi-Root Storage Hygiene
 - **Root-Aware Cleanup**: Enhanced safe deletion to wipe all 7 storage layers across either installation with Windows Recycle Bin protection by default.
-- **Open VSX Availability**: Published officially on the [Open VSX Registry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry) for VSCodium, Gitpod, and Coder users.
+- **Open VSX Availability**: Published officially on the [Open VSX Registry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry) for Antigravity IDE, VSCodium, and Coder users.
 
 
 ---

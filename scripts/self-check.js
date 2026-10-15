@@ -667,12 +667,24 @@ function testSubagents() {
                     classes: new Set(),
                     add(cls) { this.classes.add(cls); },
                     remove(cls) { this.classes.delete(cls); },
-                    toggle(cls) { if (this.classes.has(cls)) this.classes.delete(cls); else this.classes.add(cls); }
+                    toggle(cls, force) {
+                        const shouldAdd = force !== undefined ? Boolean(force) : !this.classes.has(cls);
+                        if (shouldAdd) this.classes.add(cls); else this.classes.delete(cls);
+                        return shouldAdd;
+                    }
+                },
+                get className() { return Array.from(this.classList.classes).join(' '); },
+                set className(val) {
+                    this.classList.classes = new Set((val || '').split(/\s+/).filter(Boolean));
                 },
                 style: {},
                 setAttribute() { },
                 addEventListener() { },
-                querySelector() { return makeEl('sub'); },
+                _queries: new Map(),
+                querySelector(sel) {
+                    if (!this._queries.has(sel)) this._queries.set(sel, makeEl('sub'));
+                    return this._queries.get(sel);
+                },
                 querySelectorAll() { return []; },
                 getBoundingClientRect() { return { width: 500, height: 200, left: 0, top: 0 }; },
                 textContent: '',
@@ -741,6 +753,86 @@ function testSubagents() {
         check('subagentsList collapsed after toggle', subListEl && subListEl.classList.classes.has('hidden') && chevronEl.textContent === '▶' && labelEl.textContent === 'Expand');
         vm.runInContext('toggleSubagentsCollapse()', ctx);
         check('subagentsList expanded after second toggle', subListEl && !subListEl.classList.classes.has('hidden') && chevronEl.textContent === '▼' && labelEl.textContent === 'Collapse');
+    }
+
+    // 7. Synthetic nested subagent hierarchy test
+    const makeStats = (tot) => ({
+        grandTotal: tot,
+        totalCached: Math.floor(tot * 0.5),
+        totalNonCached: Math.floor(tot * 0.3),
+        totalOutput: Math.floor(tot * 0.2),
+        calls: 5,
+        contextTimeline: []
+    });
+    const synthConvs = [
+        { id: 'h1', isSubagent: false, title: 'Main Project Chat', stats: makeStats(1000) },
+        { id: 's1', isSubagent: true, parentConversationId: 'h1', agentName: 'Coder', title: 'Code Implementer', stats: makeStats(500) },
+        { id: 's2', isSubagent: true, parentConversationId: 's1', agentName: 'Tester', title: 'Test Runner', stats: makeStats(200) },
+        { id: 'o1', isSubagent: true, parentConversationId: 'missing-99', agentName: 'OrphanAgent', title: 'Lost Worker', stats: makeStats(50) }
+    ];
+    const synthHtml = getDashboardHtml(synthConvs, 'h1', { workspaceFilter: 'all' });
+    const synthScript = synthHtml.slice(synthHtml.indexOf('>', synthHtml.indexOf('<script nonce=')) + 1, synthHtml.lastIndexOf('</script>'));
+    const synthDoc = makeDomMock();
+    const synthSandbox = {
+        acquireVsCodeApi: () => ({ postMessage() { } }),
+        window: { addEventListener() { }, onresize: null },
+        document: synthDoc
+    };
+    const synthCtx = vm.createContext(synthSandbox);
+    vm.runInContext(synthScript, synthCtx);
+
+    // Check nested subagent s2 breadcrumb ancestry: h1 -> s1
+    vm.runInContext("selectConv('s2')", synthCtx);
+    const bcEl = synthDoc.getElementById('subagentBreadcrumb');
+    const bcLinks = bcEl.children.filter(c => c.tag === 'a');
+    check('nested subagent has multi-level breadcrumb (h1 -> s1)', bcLinks.length === 2 && bcLinks[0].textContent === 'Main Project Chat' && bcLinks[1].textContent.includes('Coder'));
+
+    // Check root chat h1 subagent rollup counts both direct and nested subagents (s1 + s2 = 2)
+    vm.runInContext("selectConv('h1')", synthCtx);
+    const h1Badge = synthDoc.getElementById('subagentsCountBadge');
+    check('root chat counts all descendant subagents (2 subagents)', h1Badge && h1Badge.textContent === '2 subagents');
+
+    // Check parent subagent s1 counts its own child (s2 = 1)
+    vm.runInContext("selectConv('s1')", synthCtx);
+    const s1Badge = synthDoc.getElementById('subagentsCountBadge');
+    check('parent subagent counts its own child subagent (1 subagent)', s1Badge && s1Badge.textContent === '1 subagent');
+
+    // 8. Test individual subagent node collapse in session list
+    const convListEl = synthDoc.getElementById('convList');
+    const drawerWrap = convListEl.children.find(c => c.children.length === 2 && c.children[1].children.length >= 2);
+    check('found human chat drawer wrap in synth DOM', Boolean(drawerWrap));
+    if (drawerWrap) {
+        const childListDiv = drawerWrap.children[1];
+        const s1Row = childListDiv.children[0];
+        const s1NestedDiv = childListDiv.children[1];
+        const s1Pill = s1Row.querySelector('.sub-toggle-pill');
+        check('s1 has sub-toggle-pill in list', typeof s1Pill.onclick === 'function');
+        check('s1 child container visible initially in list', s1NestedDiv && !s1NestedDiv.classList.classes.has('hidden'));
+        s1Pill.onclick({ stopPropagation() {} });
+        check('s1 child container hidden after collapse toggle in list', s1NestedDiv && s1NestedDiv.classList.classes.has('hidden'));
+        check('s1 recorded in collapsedSubagents set', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === true);
+        s1Pill.onclick({ stopPropagation() {} });
+        check('s1 child container visible after expanding in list', s1NestedDiv && !s1NestedDiv.classList.classes.has('hidden'));
+        check('s1 removed from collapsedSubagents set', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === false);
+    }
+
+    // 9. Test individual subagent node collapse in detail view
+    vm.runInContext("selectConv('h1')", synthCtx);
+    const detailSubList = synthDoc.getElementById('subagentsList');
+    check('detail subagentsList populated', detailSubList && detailSubList.children.length === 2);
+    if (detailSubList && detailSubList.children.length === 2) {
+        const s1DetailRow = detailSubList.children[0];
+        const s1DetailNested = detailSubList.children[1];
+        const rightDiv = s1DetailRow.children[1];
+        const detailPill = rightDiv.querySelector('.detail-sub-toggle-pill');
+        check('s1 has detail-sub-toggle-pill', typeof detailPill.onclick === 'function');
+        check('s1DetailNested visible initially in detail', !s1DetailNested.classList.classes.has('hidden'));
+        detailPill.onclick({ stopPropagation() {} });
+        check('s1DetailNested hidden after collapse toggle in detail', s1DetailNested.classList.classes.has('hidden'));
+        check('s1 recorded in collapsedSubagents set from detail', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === true);
+        detailPill.onclick({ stopPropagation() {} });
+        check('s1DetailNested visible after expanding in detail', !s1DetailNested.classList.classes.has('hidden'));
+        check('s1 removed from collapsedSubagents set from detail', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === false);
     }
 }
 
@@ -1246,9 +1338,83 @@ function testAntigravityIdeSupport() {
     const telem = reader.readAllTelemetry({ dataSource: 'auto' });
     check('readAllTelemetry discovers conversations', Array.isArray(telem.conversations) && telem.conversations.length > 0);
     check('active conversation resolved', telem.active !== null);
-    check('conversations carry source tag', telem.conversations.some(c => c.source === 'ide' || c.source === 'extension'));
+    check('conversations carry source tag', telem.conversations.some(c => c.source === 'ide' || c.source === 'extension' || c.source === 'cli'));
     check('zero healthy chats falsely flagged as dead ghost chat when in-db workspaces exist',
         telem.conversations.filter(c => c.workspacePaths && c.workspacePaths.length > 0 && c.isOrphan).length === 0);
+}
+
+// 13. antigravity cli support & multi-root parity
+function testAntigravityCliSupport() {
+    section('13. antigravity cli support & multi-root parity');
+
+    // Root resolution
+    const rootsCli = reader.getInstallationRoots('cli');
+    check('cli mode resolves cli root', rootsCli.length === 1 && rootsCli[0].id === 'cli');
+    check('cli root points to antigravity-cli directory', rootsCli[0].antigravityDir.includes('antigravity-cli'));
+    const rootsAll = reader.getInstallationRoots('all');
+    check('all mode includes cli root', rootsAll.some(r => r.id === 'cli'));
+
+    // findRootForConversation across roots
+    const fakeCliConvId = 'c1111111-2222-3333-4444-555555555555';
+    const cliRoot = rootsCli[0];
+    const cliConvPath = path.join(cliRoot.convDir, `${fakeCliConvId}.db`);
+    let wroteFake = false;
+    try {
+        if (!fs.existsSync(cliRoot.convDir)) fs.mkdirSync(cliRoot.convDir, { recursive: true });
+        fs.writeFileSync(cliConvPath, '');
+        wroteFake = true;
+        const resolved = reader.findRootForConversation ? reader.findRootForConversation(fakeCliConvId) : null;
+        check('findRootForConversation resolves cli root for cli chat', resolved && resolved.id === 'cli');
+    } catch {} finally {
+        if (wroteFake) { try { fs.unlinkSync(cliConvPath); } catch {} }
+    }
+
+    // selectActiveConversation priorities: Running CLI > Idle Host Editor > Idle CLI
+    const idleHost = { id: 'host-1', isSubagent: false, source: 'extension', isRunning: false };
+    const idleCli = { id: 'cli-1', isSubagent: false, source: 'cli', isRunning: false };
+    const runningCli = { id: 'cli-running', isSubagent: false, source: 'cli', isRunning: true };
+    const subagent = { id: 'sub-1', isSubagent: true, source: 'cli', isRunning: true };
+
+    check('selectActiveConversation prioritizes running CLI over idle host',
+        reader.selectActiveConversation([idleHost, runningCli]).id === 'cli-running');
+    check('selectActiveConversation prioritizes idle host editor over idle CLI',
+        reader.selectActiveConversation([idleCli, idleHost]).id === 'host-1');
+    check('selectActiveConversation ignores running subagent in favor of human chat',
+        reader.selectActiveConversation([subagent, idleHost]).id === 'host-1');
+
+    // Multi-catalog summaries cache isolation (synthetic SQLite test)
+    const sqlite = resolveSqlite();
+    if (sqlite) {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-multi-cat-'));
+        const catA = path.join(tmpDir, 'catA.db');
+        const catB = path.join(tmpDir, 'catB.db');
+        try {
+            execSync(`"${sqlite}" "${catA}" "CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, title text, preview text, step_count integer, last_modified_time datetime, workspace_uris text, parent_conversation_id text, nesting_depth integer, agent_name text, killed numeric, raw_summary blob, status text, not_fully_idle numeric); INSERT INTO conversation_summaries VALUES ('id-a', 'Chat A', '', 5, '2026-10-14T00:00:00Z', '', '', 0, '', 0, NULL, 'CASCADE_RUN_STATUS_RUNNING', 1);"`, { stdio: 'ignore' });
+            execSync(`"${sqlite}" "${catB}" "CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, title text, preview text, step_count integer, last_modified_time datetime, workspace_uris text, parent_conversation_id text, nesting_depth integer, agent_name text, killed numeric, raw_summary blob, status text, not_fully_idle numeric); INSERT INTO conversation_summaries VALUES ('id-b', 'Chat B', '', 10, '2026-10-14T01:00:00Z', '', '', 0, '', 0, NULL, '', 0);"`, { stdio: 'ignore' });
+
+            const resA = reader.getConversationSummaries(catA, sqlite);
+            check('catA parses running status', resA && resA['id-a'] && resA['id-a'].isRunning === true && resA['id-a'].status === 'CASCADE_RUN_STATUS_RUNNING');
+            const resB = reader.getConversationSummaries(catB, sqlite);
+            check('catB parses idle status', resB && resB['id-b'] && resB['id-b'].isRunning === false);
+
+            // Re-read A: must hit cache without having been evicted by reading B
+            const resA2 = reader.getConversationSummaries(catA, sqlite);
+            check('catA preserved in multi-catalog cache without eviction', resA2 && resA2['id-a'] && resA2['id-a'].title === 'Chat A');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    }
+
+    // Real CLI data read
+    if (fs.existsSync(cliRoot.convDir)) {
+        const cliTelem = reader.readAllTelemetry({ dataSource: 'cli' });
+        check('cli telemetry reads conversations from antigravity-cli', Array.isArray(cliTelem.conversations));
+        if (cliTelem.conversations.length > 0) {
+            check('cli conversations carry source === cli', cliTelem.conversations.every(c => c.source === 'cli'));
+            check('cli healthy conversations are not flagged as orphans',
+                cliTelem.conversations.filter(c => c.workspacePaths && c.workspacePaths.length > 0 && c.isOrphan).length === 0);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1263,6 +1429,7 @@ testConfigurationAndSqlite();
 testChartLayerIntegrity();
 testChangelogExtraction();
 testAntigravityIdeSupport();
+testAntigravityCliSupport();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

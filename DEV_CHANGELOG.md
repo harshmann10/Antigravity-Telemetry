@@ -3,6 +3,47 @@
 Technical and architectural notes for Antigravity Telemetry, grouped by development and review phases.
 For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 
+## 2026-10-16 — Phase 6: Antigravity CLI Integration & Multi-Source Synthesis
+
+**Task 1 — CLI Installation Discovery & Data Source Consolidation**
+- Added Antigravity CLI root discovery (`~/.gemini/antigravity-cli`) supporting terminal `agy` sessions alongside IDE and Extension roots.
+- Consolidated `antigravity.dataSource` configuration options: replaced `"both"` with `"all"` (`["auto", "ide", "extension", "cli", "all"]`), maintaining seamless backward compatibility for existing configurations.
+- In `"auto"` mode, automatically discovers active or matching workspace CLI sessions without cluttering unrelated projects.
+
+**Task 2 — Multi-Catalog Cache Isolation**
+- Refactored `summariesCache` to a per-catalog cache map (`summariesCaches = new Map()`) keyed by canonical catalog path.
+- Prevented catalog eviction ping-pong between VS Code Extension and Antigravity CLI catalogs during heartbeats.
+
+**Task 3 — Session Execution State & Active Conversation Prioritization**
+- Decoded execution status (`CASCADE_RUN_STATUS_RUNNING` and `not_fully_idle`) from catalog protobuf metadata.
+- Updated `selectActiveConversation()` to prioritize actively running human sessions (including running CLI sessions) over idle sessions, while preventing background CLI processes from hijacking the status bar over host editor chats.
+
+**Task 4 — Visual Dashboard & QuickPick Integration**
+- Added emerald `[CLI]` badges with terminal icon in the Visual Dashboard conversation list and detail view.
+- Added terminal icons `$(terminal)` and `[CLI]` prefixes in History and Deletion QuickPick menus.
+- Extended zero-residue deletion to clean all 7 storage layers targeting CLI session directories.
+- Added Section 13 to `scripts/self-check.js` (190 passing tests total).
+
+**Task 5 — Multi-Level Subagent Hierarchy & Ancestor Chain Resolution**
+- Diagnosed issue where subagents spawned by other subagents (nesting depth $\ge 2$) were falsely grouped under "Unattached Subagents" with an "orphan" badge in the All Sessions view, despite correctly identifying their parent in the detail view.
+- Implemented `getRootConversation()` to recursively trace parent chains up to the root human chat, attaching multi-level subagents to their origin chat family.
+- Added recursive tree rendering (`renderSubagentTree`) in both the session list drawer and the detail view Subagents card, visually nesting child subagents under their parent worker with vertical indentation guides.
+- Added multi-level breadcrumb navigation in the detail view (`Main Chat → Subagent 1 → Subagent 2`), enabling clickable traversal up the entire delegation chain.
+- Backfilled `parentTitle` across merged multi-root catalogs in `readAllTelemetry()`.
+- Added synthetic nested hierarchy tests to Section 7 in `scripts/self-check.js` (193 tests passing).
+
+**Task 6 — Granular Individual Subagent Collapse / Expand Controls**
+- Implemented node-level subagent collapse and expand controls in addition to the global session drawer toggle (`expandedDrawers`):
+  - Added `collapsedSubagents` Set to track individually collapsed subagent nodes across background polling and telemetry updates.
+  - In `createConvRow`, added interactive left chevron arrow (`▾`/`▸`) and right toggle badge (`▾ X subagents`) on any subagent node that has child workers.
+  - In `renderSubagentTree`, recursively bound collapse/expand handlers to toggle child containers while preserving user state during background 10s heartbeats.
+  - Automatically uncollapsed intermediate subagents when matching active search queries to guarantee discoverability of nested results.
+  - In the detail view "Subagents & Background Workers" card, updated `renderDetailSubagentTree` so nested child workers can also be individually expanded or collapsed without toggling the entire parent card.
+  - Guaranteed zero CSP inline handler violations using `div.querySelector(...)` event listeners with `e.stopPropagation()` to prevent unwanted navigation.
+  - Added unit tests in `scripts/self-check.js` verifying toggle behavior in both the session list and detail card (207 tests passing).
+
+---
+
 ## 2026-10-15 — Phase 5: Remote SSH Bandwidth Optimization & Local Storage Architecture
 
 **Task 1 — Root Cause Diagnosis: Remote SSH Traffic Explosion**
@@ -34,8 +75,6 @@ For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 - Added `antigravity.enableCache` boolean setting (default `true`) to `package.json` with configuration change listener in `extension.js`.
 - Added interactive QuickMenu toggle: `$(archive) Persistent Startup Cache: Enabled / Disabled`.
 - When disabled, immediately cleans up any existing `telemetry-cache.json` on disk and bypasses disk writes, ensuring fresh on-demand SQLite parsing.
-
----
 
 ## 2026-10-11 — Phase 4: Antigravity IDE & Multi-Root Telemetry Support (Issue #1)
 

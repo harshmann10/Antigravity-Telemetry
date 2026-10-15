@@ -10,6 +10,7 @@ media/tailwind-input.css
 .DS_Store
 DEV_CHANGELOG.md
 AGENTS.md
+CLI.md
 .gitignore
 media/icon-concept-*.png
 logo*.png

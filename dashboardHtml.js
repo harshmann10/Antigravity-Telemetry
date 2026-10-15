@@ -513,6 +513,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     let currentTimeline = [];
     let pendingDeleteId = null;
     let expandedDrawers = new Set();
+    let collapsedSubagents = new Set();
     let unattachedExpanded = false;
     let subagentsCardCollapsed = false;
     let isRefreshing = false;
@@ -932,8 +933,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           titleText = t;
         }
 
-        const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
-        const srcPrefix = hasMultipleSources && c.source ? (c.source === 'ide' ? '[IDE] ' : '[Ext] ') : '';
+        const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
+        const srcPrefix = hasMultipleSources && c.source ? (c.source === 'cli' ? '[CLI] ' : (c.source === 'ide' ? '[IDE] ' : '[Ext] ')) : '';
         opt.textContent = srcPrefix + wsPrefix + titleText + isAct + ' · ' + tokM + ' (' + hit + ' cache)';
         opt.title = srcPrefix + (wsPrefix ? wsPrefix : '') + fullTitle + isAct + ' — ' + (c.storageMB ? c.storageMB + 'MB · ' : '') + tokM + ' tok (' + (c.stats ? c.stats.cacheHitRate : 0) + '% cache)';
         if (c.id === selectedId) opt.selected = true;
@@ -982,7 +983,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         return;
       }
 
-      function createConvRow(c) {
+      function createConvRow(c, collapseOpts = null) {
         const isSel = c.id === selectedId;
         const isAct = c.id === currentActiveId;
         const div = document.createElement('div');
@@ -1000,12 +1001,30 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         const wsBadge = wsName && currentWorkspaceFilter === 'all'
           ? '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 shrink-0" title="Workspace: ' + escapeHtml(wsName) + '"><svg class="w-2.5 h-2.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>' + escapeHtml(wsName) + '</span>'
           : '';
-        const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
-        const sourceBadge = hasMultipleSources && c.source
-          ? (c.source === 'ide'
-              ? '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0" title="Source: Antigravity IDE"><svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>IDE</span>'
-              : '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0" title="Source: Antigravity Extension"><svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>Ext</span>')
-          : '';
+        const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
+        let sourceBadge = '';
+        if (hasMultipleSources && c.source) {
+          if (c.source === 'cli') {
+            sourceBadge = '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0" title="Source: Antigravity CLI"><svg class="w-2.5 h-2.5 text-emerald-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>CLI</span>';
+          } else if (c.source === 'ide') {
+            sourceBadge = '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0" title="Source: Antigravity IDE"><svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>IDE</span>';
+          } else {
+            sourceBadge = '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0" title="Source: Antigravity Extension"><svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>Ext</span>';
+          }
+        }
+
+        let leftChevronHtml = '';
+        let collapsePillHtml = '';
+        if (collapseOpts && collapseOpts.hasChildren) {
+          const arrow = collapseOpts.isCollapsed ? '▸' : '▾';
+          leftChevronHtml = '<span class="sub-toggle-arrow-left text-[11px] text-purple-300 font-bold select-none cursor-pointer hover:text-purple-200 shrink-0 mr-0.5" title="' + (collapseOpts.isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' + arrow + '</span>';
+          const cnt = collapseOpts.count || 0;
+          collapsePillHtml = 
+            '<button class="sub-toggle-pill flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-medium border bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25 cursor-pointer shrink-0" title="' + (collapseOpts.isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' +
+              '<span class="sub-toggle-arrow text-[10px]">' + arrow + '</span>' +
+              '<span>' + cnt + ' subagent' + (cnt > 1 ? 's' : '') + '</span>' +
+            '</button>';
+        }
 
         let titleHtml = '';
         if (c.isSubagent) {
@@ -1016,10 +1035,14 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           if (displayTitle.length > 38) {
             displayTitle = displayTitle.slice(0, 36).trim() + '…';
           }
+          const parentConv = c.parentConversationId ? CONVERSATIONS.find(x => x.id === c.parentConversationId) : null;
+          const parentTooltip = parentConv && parentConv.isSubagent ? ' (Subagent of ' + (parentConv.agentName || parentConv.title || 'subagent') + ')' : '';
+          const fullTooltip = cleanTitle ? (cleanTitle + parentTooltip) : '';
           const taskSpan = displayTitle
-            ? '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(cleanTitle) + '">' + escapeHtml(displayTitle) + '</span>'
+            ? '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(fullTooltip) + '">' + escapeHtml(displayTitle) + '</span>'
             : '';
           titleHtml = 
+            leftChevronHtml +
             '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + agentLabel + '</span>' +
             taskSpan;
         } else {
@@ -1035,6 +1058,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             '</div>' +
             '<div class="flex items-center gap-1.5 shrink-0">' +
               (isAct ? '<span class="text-[9px] font-bold px-1 rounded bg-emerald-500/20 text-emerald-400">ACTIVE</span>' : '') +
+              collapsePillHtml +
               '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ' + (hitRate > 90 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400') + '">' + hitRate + '%</span>' +
               '<button class="del-btn p-1 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" title="${delTooltip}"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>' +
             '</div>' +
@@ -1053,6 +1077,23 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             e.stopPropagation();
             openDeleteModal(c.id);
           };
+        }
+
+        if (collapseOpts && collapseOpts.hasChildren && collapseOpts.onToggle) {
+          const pill = div.querySelector('.sub-toggle-pill');
+          if (pill) {
+            pill.onclick = (e) => {
+              e.stopPropagation();
+              collapseOpts.onToggle();
+            };
+          }
+          const leftArr = div.querySelector('.sub-toggle-arrow-left');
+          if (leftArr) {
+            leftArr.onclick = (e) => {
+              e.stopPropagation();
+              collapseOpts.onToggle();
+            };
+          }
         }
         return div;
       }
@@ -1089,17 +1130,49 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       const humanChats = wsList.filter(c => !c.isSubagent);
       const allSubagents = wsList.filter(c => c.isSubagent);
 
-      const parentToChildren = new Map();
-      const unattached = [];
+      const convById = new Map(CONVERSATIONS.map(c => [c.id, c]));
 
+      // Map direct children for every conversation
+      const childrenMap = new Map();
       allSubagents.forEach(s => {
         const pId = s.parentConversationId;
-        if (pId && humanChats.some(h => h.id === pId)) {
-          if (!parentToChildren.has(pId)) parentToChildren.set(pId, []);
-          parentToChildren.get(pId).push(s);
-        } else {
-          unattached.push(s);
+        if (pId) {
+          if (!childrenMap.has(pId)) childrenMap.set(pId, []);
+          childrenMap.get(pId).push(s);
         }
+      });
+
+      // Find root ancestor for any conversation
+      function getRootConversation(conv) {
+        let curr = conv;
+        const visited = new Set();
+        while (curr && curr.parentConversationId && !visited.has(curr.id)) {
+          visited.add(curr.id);
+          const parent = convById.get(curr.parentConversationId);
+          if (!parent) break;
+          curr = parent;
+          if (!curr.isSubagent) {
+            return curr;
+          }
+        }
+        return curr;
+      }
+
+      // Collect all descendant subagents recursively
+      function getAllDescendants(parentId) {
+        const descendants = [];
+        const direct = childrenMap.get(parentId) || [];
+        for (const child of direct) {
+          descendants.push(child);
+          descendants.push(...getAllDescendants(child.id));
+        }
+        return descendants;
+      }
+
+      // Unattached subagents: subagents whose root ancestor is NOT in humanChats
+      const unattached = allSubagents.filter(s => {
+        const root = getRootConversation(s);
+        return !root || root.isSubagent || !humanChats.some(h => h.id === root.id);
       });
 
       // Handle search filtering
@@ -1109,16 +1182,18 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       if (q) {
         visibleHumans = humanChats.filter(h => {
           const hMatch = (h.title || '').toLowerCase().includes(q) || (h.id || '').toLowerCase().includes(q);
-          const children = parentToChildren.get(h.id) || [];
-          const cMatch = children.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
+          const allDesc = getAllDescendants(h.id);
+          const cMatch = allDesc.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
           if (cMatch) expandedDrawers.add(h.id);
           return hMatch || cMatch;
         });
 
         visibleUnattached = unattached.filter(u => {
           const uMatch = (u.agentName || '').toLowerCase().includes(q) || (u.agentRole || '').toLowerCase().includes(q) || (u.title || '').toLowerCase().includes(q) || (u.id || '').toLowerCase().includes(q);
-          if (uMatch) unattachedExpanded = true;
-          return uMatch;
+          const uDesc = getAllDescendants(u.id);
+          const udMatch = uDesc.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
+          if (uMatch || udMatch) unattachedExpanded = true;
+          return uMatch || udMatch;
         });
       }
 
@@ -1127,14 +1202,74 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         return;
       }
 
+      function renderSubagentTree(subList, treeContainer) {
+        subList.forEach(ch => {
+          const allNested = getAllDescendants(ch.id);
+          const hasChildren = allNested.length > 0;
+          let collapseOpts = null;
+          let nestedDiv = null;
+
+          if (hasChildren) {
+            if (q) {
+              const anyChildMatches = allNested.some(c => 
+                (c.agentName || '').toLowerCase().includes(q) || 
+                (c.agentRole || '').toLowerCase().includes(q) || 
+                (c.title || '').toLowerCase().includes(q) || 
+                (c.id || '').toLowerCase().includes(q)
+              );
+              if (anyChildMatches) {
+                collapsedSubagents.delete(ch.id);
+              }
+            }
+            const isCollapsed = collapsedSubagents.has(ch.id);
+            collapseOpts = {
+              hasChildren: true,
+              count: allNested.length,
+              isCollapsed: isCollapsed,
+              onToggle: () => {
+                if (collapsedSubagents.has(ch.id)) {
+                  collapsedSubagents.delete(ch.id);
+                } else {
+                  collapsedSubagents.add(ch.id);
+                }
+                const nowCollapsed = collapsedSubagents.has(ch.id);
+                if (nestedDiv) nestedDiv.classList.toggle('hidden', nowCollapsed);
+                const leftArrow = childRow.querySelector('.sub-toggle-arrow-left');
+                if (leftArrow) {
+                  leftArrow.textContent = nowCollapsed ? '▸' : '▾';
+                  leftArrow.title = nowCollapsed ? 'Show child subagents' : 'Hide child subagents';
+                }
+                const pillArrow = childRow.querySelector('.sub-toggle-arrow');
+                if (pillArrow) pillArrow.textContent = nowCollapsed ? '▸' : '▾';
+                const pill = childRow.querySelector('.sub-toggle-pill');
+                if (pill) pill.title = nowCollapsed ? 'Show child subagents' : 'Hide child subagents';
+              }
+            };
+          }
+
+          const childRow = createConvRow(ch, collapseOpts);
+          treeContainer.appendChild(childRow);
+
+          const nested = childrenMap.get(ch.id) || [];
+          if (nested.length > 0) {
+            const isCollapsed = collapsedSubagents.has(ch.id);
+            nestedDiv = document.createElement('div');
+            nestedDiv.className = 'space-y-1.5 ml-4 my-1 border-l-2 border-purple-500/25 pl-2.5' + (isCollapsed ? ' hidden' : '');
+            renderSubagentTree(nested, nestedDiv);
+            treeContainer.appendChild(nestedDiv);
+          }
+        });
+      }
+
       visibleHumans.forEach(h => {
         const row = createConvRow(h, false);
         container.appendChild(row);
 
-        const children = parentToChildren.get(h.id) || [];
-        if (children.length > 0) {
-          const cTok = children.reduce((sum, ch) => sum + (ch.stats ? ch.stats.grandTotal : 0), 0);
-          const cStorage = children.reduce((sum, ch) => sum + (parseFloat(ch.storageMB) || 0), 0).toFixed(1);
+        const directChildren = childrenMap.get(h.id) || [];
+        const allDescendants = getAllDescendants(h.id);
+        if (allDescendants.length > 0) {
+          const cTok = allDescendants.reduce((sum, ch) => sum + (ch.stats ? ch.stats.grandTotal : 0), 0);
+          const cStorage = allDescendants.reduce((sum, ch) => sum + (parseFloat(ch.storageMB) || 0), 0).toFixed(1);
           const isExp = expandedDrawers.has(h.id);
 
           const drawerWrap = document.createElement('div');
@@ -1146,7 +1281,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             '<div class="flex items-center gap-1.5 text-purple-300 font-medium">' +
               '<span class="drawer-arrow text-[11px]">' + (isExp ? '▾' : '▸') + '</span>' +
               '<span class="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/25 text-purple-300 border border-purple-500/30"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>subagents</span>' +
-              '<span>' + children.length + ' subagent' + (children.length > 1 ? 's' : '') + '</span>' +
+              '<span>' + allDescendants.length + ' subagent' + (allDescendants.length > 1 ? 's' : '') + '</span>' +
               '<span class="muted-color font-mono">· ' + formatTok(cTok) + ' tok · ' + cStorage + ' MB</span>' +
             '</div>' +
             '<span class="text-[10px] muted-color">' + (isExp ? 'Hide' : 'Show') + '</span>';
@@ -1154,10 +1289,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           const childListDiv = document.createElement('div');
           childListDiv.className = 'space-y-1.5 ml-5 mt-1 border-l-2 border-purple-500/30 pl-2.5 ' + (isExp ? '' : 'hidden');
 
-          children.forEach(ch => {
-            const childRow = createConvRow(ch, true, null);
-            childListDiv.appendChild(childRow);
-          });
+          renderSubagentTree(directChildren, childListDiv);
 
           toggle.onclick = (e) => {
             e.stopPropagation();
@@ -1201,10 +1333,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         const unListDiv = document.createElement('div');
         unListDiv.className = 'space-y-1.5 ml-3 mt-1 border-l-2 border-amber-500/30 pl-2.5 ' + (unattachedExpanded ? '' : 'hidden');
 
-        visibleUnattached.forEach(ch => {
-          const uRow = createConvRow(ch, true);
-          unListDiv.appendChild(uRow);
-        });
+        const unattachedTopLevel = visibleUnattached.filter(u => !u.parentConversationId || !visibleUnattached.some(other => other.id === u.parentConversationId));
+        renderSubagentTree(unattachedTopLevel, unListDiv);
 
         unToggle.onclick = (e) => {
           e.stopPropagation();
@@ -1303,6 +1433,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           selectedId = next.id;
         }
       }
+      expandedDrawers.delete(idToDelete);
+      collapsedSubagents.delete(idToDelete);
     }
 
     function renderDetail() {
@@ -1332,30 +1464,52 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           breadcrumb.classList.remove('hidden');
           breadcrumb.innerHTML = '';
 
-          const parentId = conv.parentConversationId;
-          const parentConv = parentId ? CONVERSATIONS.find(c => c.id === parentId) : null;
+          // Build ancestor chain
+          const ancestors = [];
+          let curr = conv;
+          const visited = new Set();
+          while (curr && curr.parentConversationId && !visited.has(curr.id)) {
+            visited.add(curr.id);
+            const p = CONVERSATIONS.find(c => c.id === curr.parentConversationId);
+            if (!p) {
+              if (curr.parentTitle) {
+                ancestors.unshift({ id: null, title: curr.parentTitle, missing: true });
+              }
+              break;
+            }
+            ancestors.unshift(p);
+            curr = p;
+          }
 
-          const prefix = document.createElement('span');
-          prefix.className = 'muted-color';
-          prefix.textContent = 'Subagent of: ';
-          breadcrumb.appendChild(prefix);
+          if (ancestors.length > 0) {
+            ancestors.forEach((anc, idx) => {
+              if (idx > 0) {
+                const sep = document.createElement('span');
+                sep.className = 'muted-color text-[11px]';
+                sep.textContent = ' → ';
+                breadcrumb.appendChild(sep);
+              }
+              if (anc.missing) {
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'text-zinc-300 font-medium';
+                nameSpan.textContent = anc.title;
+                breadcrumb.appendChild(nameSpan);
 
-          if (parentConv) {
-            const link = document.createElement('a');
-            link.className = 'text-blue-400 hover:underline cursor-pointer font-medium';
-            link.textContent = parentConv.title || 'Parent Chat';
-            link.onclick = () => selectConv(parentConv.id);
-            breadcrumb.appendChild(link);
-          } else if (conv.parentTitle) {
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'text-zinc-300 font-medium';
-            nameSpan.textContent = conv.parentTitle;
-            breadcrumb.appendChild(nameSpan);
-
-            const note = document.createElement('span');
-            note.className = 'text-[10px] muted-color';
-            note.textContent = ' (session data no longer on disk)';
-            breadcrumb.appendChild(note);
+                const note = document.createElement('span');
+                note.className = 'text-[10px] muted-color';
+                note.textContent = ' (session data no longer on disk)';
+                breadcrumb.appendChild(note);
+              } else {
+                const link = document.createElement('a');
+                link.className = 'text-blue-400 hover:underline cursor-pointer font-medium';
+                const label = anc.isSubagent 
+                  ? (anc.agentName ? '[' + anc.agentName + '] ' : '') + (anc.title || anc.agentRole || 'Subagent')
+                  : (anc.title || 'Parent Chat');
+                link.textContent = label;
+                link.onclick = () => selectConv(anc.id);
+                breadcrumb.appendChild(link);
+              }
+            });
           } else {
             const missing = document.createElement('span');
             missing.className = 'muted-color italic';
@@ -1371,49 +1525,126 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
 
       // Subagents & Background Workers Card
-      const children = CONVERSATIONS.filter(c => c.parentConversationId === conv.id);
+      function getDescendantsForConv(parentId) {
+        const desc = [];
+        const direct = CONVERSATIONS.filter(c => c.parentConversationId === parentId);
+        for (const ch of direct) {
+          desc.push(ch);
+          desc.push(...getDescendantsForConv(ch.id));
+        }
+        return desc;
+      }
+      const directChildren = CONVERSATIONS.filter(c => c.parentConversationId === conv.id);
+      const allDescendants = getDescendantsForConv(conv.id);
       const subCard = document.getElementById('subagentsCard');
       const subList = document.getElementById('subagentsList');
       const subCountBadge = document.getElementById('subagentsCountBadge');
       const subRolledUp = document.getElementById('subagentsRolledUpTotal');
 
-      if (children.length > 0) {
+      if (allDescendants.length > 0) {
         if (subCard) subCard.classList.remove('hidden');
-        if (subCountBadge) subCountBadge.textContent = children.length + (children.length === 1 ? ' subagent' : ' subagents');
+        if (subCountBadge) subCountBadge.textContent = allDescendants.length + (allDescendants.length === 1 ? ' subagent' : ' subagents');
 
         let childTok = 0;
         if (subList) {
           subList.innerHTML = '';
-          children.forEach(ch => {
-            const cTok = ch.stats ? ch.stats.grandTotal : 0;
-            childTok += cTok;
 
-            const row = document.createElement('div');
-            row.className = 'p-2 inner-bg border border-color rounded-lg flex items-center justify-between gap-2 hover:border-blue-500/40 cursor-pointer transition-colors';
-            row.onclick = () => selectConv(ch.id);
+          function renderDetailSubagentTree(subListItems, treeContainer) {
+            subListItems.forEach(ch => {
+              const cTok = ch.stats ? ch.stats.grandTotal : 0;
+              childTok += cTok;
 
-            const left = document.createElement('div');
-            left.className = 'flex items-center gap-2 min-w-0';
-            const hasTask = ch.title && ch.title !== '<original_task>' && ch.title !== 'Untitled Conversation' && ch.title !== 'Untitled' && ch.title.trim() !== ch.agentName;
-            let displayTask = hasTask ? ch.title.trim() : (ch.agentRole ? ch.agentRole.trim() : (ch.agentName || ch.id.slice(0, 8)));
-            if (displayTask.length > 36) displayTask = displayTask.slice(0, 34).trim() + '…';
-            left.innerHTML = 
-              '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
-              '<span class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)] font-medium truncate" title="' + escapeHtml(ch.title || '') + '">' + escapeHtml(displayTask) + '</span>' +
-              '<span class="text-[10px] muted-color font-mono shrink-0">(' + escapeHtml(ch.id.slice(0, 8)) + ')</span>';
+              const directSubs = CONVERSATIONS.filter(c => c.parentConversationId === ch.id);
+              const allChildSubs = getDescendantsForConv(ch.id);
+              const hasChildren = allChildSubs.length > 0;
+              const isCollapsed = collapsedSubagents.has(ch.id);
+              let nestedDiv = null;
 
-            const right = document.createElement('div');
-            right.className = 'flex items-center gap-2.5 shrink-0 text-xs font-mono';
-            right.innerHTML = 
-              '<span class="text-zinc-400 text-[11px]">' + (ch.storageMB || '0.0') + ' MB</span>' +
-              '<span class="text-emerald-400 font-semibold">' + formatTok(cTok) + ' tok</span>' +
-              '<span class="text-[10px] muted-color">(' + (ch.stats ? ch.stats.calls : 0) + ' calls)</span>' +
-              '<span class="text-blue-400 text-[11px]">Inspect →</span>';
+              const row = document.createElement('div');
+              row.className = 'p-2 inner-bg border border-color rounded-lg flex items-center justify-between gap-2 hover:border-blue-500/40 cursor-pointer transition-colors';
+              row.onclick = () => selectConv(ch.id);
 
-            row.appendChild(left);
-            row.appendChild(right);
-            subList.appendChild(row);
-          });
+              let leftChevronHtml = '';
+              let pillHtml = '';
+              if (hasChildren) {
+                const arrow = isCollapsed ? '▸' : '▾';
+                leftChevronHtml = '<span class="detail-sub-toggle-arrow text-[11px] text-purple-300 font-bold select-none cursor-pointer hover:text-purple-200 shrink-0 mr-0.5" title="' + (isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' + arrow + '</span>';
+                pillHtml = 
+                  '<button class="detail-sub-toggle-pill flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-medium border bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25 cursor-pointer shrink-0" title="' + (isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' +
+                    '<span class="detail-sub-arrow text-[10px]">' + arrow + '</span>' +
+                    '<span>' + allChildSubs.length + ' subagent' + (allChildSubs.length > 1 ? 's' : '') + '</span>' +
+                  '</button>';
+              }
+
+              const left = document.createElement('div');
+              left.className = 'flex items-center gap-2 min-w-0';
+              const hasTask = ch.title && ch.title !== '<original_task>' && ch.title !== 'Untitled Conversation' && ch.title !== 'Untitled' && ch.title.trim() !== ch.agentName;
+              let displayTask = hasTask ? ch.title.trim() : (ch.agentRole ? ch.agentRole.trim() : (ch.agentName || ch.id.slice(0, 8)));
+              if (displayTask.length > 36) displayTask = displayTask.slice(0, 34).trim() + '…';
+              left.innerHTML = 
+                leftChevronHtml +
+                '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
+                '<span class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)] font-medium truncate" title="' + escapeHtml(ch.title || '') + '">' + escapeHtml(displayTask) + '</span>' +
+                '<span class="text-[10px] muted-color font-mono shrink-0">(' + escapeHtml(ch.id.slice(0, 8)) + ')</span>';
+
+              const right = document.createElement('div');
+              right.className = 'flex items-center gap-2.5 shrink-0 text-xs font-mono';
+              right.innerHTML = 
+                pillHtml +
+                '<span class="text-zinc-400 text-[11px]">' + (ch.storageMB || '0.0') + ' MB</span>' +
+                '<span class="text-emerald-400 font-semibold">' + formatTok(cTok) + ' tok</span>' +
+                '<span class="text-[10px] muted-color">(' + (ch.stats ? ch.stats.calls : 0) + ' calls)</span>' +
+                '<span class="text-blue-400 text-[11px]">Inspect →</span>';
+
+              if (hasChildren) {
+                const toggleChild = () => {
+                  if (collapsedSubagents.has(ch.id)) {
+                    collapsedSubagents.delete(ch.id);
+                  } else {
+                    collapsedSubagents.add(ch.id);
+                  }
+                  const nowCol = collapsedSubagents.has(ch.id);
+                  if (nestedDiv) nestedDiv.classList.toggle('hidden', nowCol);
+                  const arr = left.querySelector('.detail-sub-toggle-arrow');
+                  if (arr) {
+                    arr.textContent = nowCol ? '▸' : '▾';
+                    arr.title = nowCol ? 'Show child subagents' : 'Hide child subagents';
+                  }
+                  const pillArr = right.querySelector('.detail-sub-arrow');
+                  if (pillArr) pillArr.textContent = nowCol ? '▸' : '▾';
+                  const pillBtn = right.querySelector('.detail-sub-toggle-pill');
+                  if (pillBtn) pillBtn.title = nowCol ? 'Show child subagents' : 'Hide child subagents';
+                };
+                const pillBtn = right.querySelector('.detail-sub-toggle-pill');
+                if (pillBtn) {
+                  pillBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    toggleChild();
+                  };
+                }
+                const arrowEl = left.querySelector('.detail-sub-toggle-arrow');
+                if (arrowEl) {
+                  arrowEl.onclick = (e) => {
+                    e.stopPropagation();
+                    toggleChild();
+                  };
+                }
+              }
+
+              row.appendChild(left);
+              row.appendChild(right);
+              treeContainer.appendChild(row);
+
+              if (directSubs.length > 0) {
+                nestedDiv = document.createElement('div');
+                nestedDiv.className = 'space-y-1.5 ml-4 my-1 border-l-2 border-purple-500/25 pl-2.5' + (isCollapsed ? ' hidden' : '');
+                renderDetailSubagentTree(directSubs, nestedDiv);
+                treeContainer.appendChild(nestedDiv);
+              }
+            });
+          }
+
+          renderDetailSubagentTree(directChildren, subList);
         }
 
         const parentTok = s.grandTotal || 0;
@@ -1439,18 +1670,23 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
 
       const srcBadge = document.getElementById('sourceBadgeDetail');
-      const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
+      const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
       if (srcBadge) {
         if (hasMultipleSources && conv.source) {
           srcBadge.classList.remove('hidden');
-          const isIde = conv.source === 'ide';
-          const icon = isIde
-            ? '<svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>'
-            : '<svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>';
-          srcBadge.innerHTML = icon + '<span>' + (isIde ? 'IDE' : 'Ext') + '</span>';
-          srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ' + 
-            (isIde ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30');
-          srcBadge.title = isIde ? 'Source: Antigravity IDE' : 'Source: Antigravity Extension';
+          if (conv.source === 'cli') {
+            srcBadge.innerHTML = '<svg class="w-2.5 h-2.5 text-emerald-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg><span>CLI</span>';
+            srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+            srcBadge.title = 'Source: Antigravity CLI';
+          } else if (conv.source === 'ide') {
+            srcBadge.innerHTML = '<svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg><span>IDE</span>';
+            srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30';
+            srcBadge.title = 'Source: Antigravity IDE';
+          } else {
+            srcBadge.innerHTML = '<svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg><span>Ext</span>';
+            srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 bg-amber-500/20 text-amber-300 border border-amber-500/30';
+            srcBadge.title = 'Source: Antigravity Extension';
+          }
         } else {
           srcBadge.classList.add('hidden');
         }
@@ -1495,21 +1731,21 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       document.getElementById('kpiOutputSub').textContent = 'Avg ' + (s.avgOutput || 0).toLocaleString() + ' tok / call · ' + (s.thinkingRate || '0.0') + '% think';
 
       // Token Composition 3-part Progress Bar & Legend
-      const pctRead = ((s.totalCached / tot) * 100).toFixed(1);
-      const pctWrite = ((s.totalNonCached / tot) * 100).toFixed(1);
-      const pctOut = ((s.totalOutput / tot) * 100).toFixed(1);
+      const pctRead = (((s.totalCached || 0) / tot) * 100).toFixed(1);
+      const pctWrite = (((s.totalNonCached || 0) / tot) * 100).toFixed(1);
+      const pctOut = (((s.totalOutput || 0) / tot) * 100).toFixed(1);
 
       document.getElementById('barCacheRead').style.width = pctRead + '%';
       document.getElementById('barCacheWrite').style.width = pctWrite + '%';
       document.getElementById('barOutput').style.width = pctOut + '%';
 
-      document.getElementById('legCacheRead').textContent = s.totalCached.toLocaleString() + ' tok';
+      document.getElementById('legCacheRead').textContent = (s.totalCached || 0).toLocaleString() + ' tok';
       document.getElementById('legCacheReadPct').textContent = pctRead + '%';
 
-      document.getElementById('legCacheWrite').textContent = s.totalNonCached.toLocaleString() + ' tok';
+      document.getElementById('legCacheWrite').textContent = (s.totalNonCached || 0).toLocaleString() + ' tok';
       document.getElementById('legCacheWritePct').textContent = pctWrite + '%';
 
-      document.getElementById('legOutput').textContent = s.totalOutput.toLocaleString() + ' tok';
+      document.getElementById('legOutput').textContent = (s.totalOutput || 0).toLocaleString() + ' tok';
       document.getElementById('legOutputPct').textContent = pctOut + '%';
 
       // Session Intelligence & Turn Metrics

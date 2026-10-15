@@ -55,7 +55,7 @@ G:\web dev\antigravity-telemetry\
 - **Refresh loop**: 10 s heartbeat that **skips while the window is unfocused** and refreshes on focus regain; guarded by `isRefreshing` so watcher + timer + manual refresh cannot stack.
 - **Watchers**: `conversations/` across all detected installation roots (filtered to `.db` family incl. `-wal`/`-shm`/`-journal`), debounced 400 ms; `conversation_summaries.db`, debounced 600 ms; plus Antigravity IDE's `state.vscdb` in `globalStorage`, debounced 800 ms.
 - **Logging**: `log()` writes to the `Antigravity Telemetry` OutputChannel (`antigravity.showLogs`), never `console`.
-- **Settings** (`getConfig()`): `dataSource` (`auto`, `ide`, `extension`, `both`), `deleteToRecycleBin`, `workspaceFilter`, `sqlitePath`.
+- **Settings** (`getConfig()`): `dataSource` (`auto`, `cli`, `ide`, `extension`, `all`), `deleteToRecycleBin`, `workspaceFilter`, `sqlitePath`.
 - **Exports for tooling and tests**: `readAllTelemetry`, `deleteConversation`, `analyzeConversation`, `validateConversationId`, `clearAnalysisCache`, `dumpAnalysisCache`, `loadAnalysisCache`, `extractSubagentRole`, `recyclePaths`, `parseWorkspaceInfo`, `conversationMatchesWorkspace`, `selectActiveConversation`, `getSqliteBinary`, `setCustomSqlitePath`, `getInstallationRoots`, `getVscdbSummaries`, `parseVscdbTrajectorySummaries`, `extractInDbWorkspaces`, `extractInDbPrompt`, `extractInDbMetadata`.
 - **Delete outcomes** are reported through `reportDeleteResult()`, which distinguishes full success, partial failure (locked files) and "nothing to delete" — never claim bytes that were not freed.
 
@@ -65,9 +65,10 @@ G:\web dev\antigravity-telemetry\
 
 ### Multi-Root Antigravity Ecosystem:
 
-The extension unifies telemetry across two distinct Antigravity environments:
+The extension unifies telemetry across three distinct Antigravity environments:
 1. **Antigravity Extension in VS Code**: Root at `%USERPROFILE%\.gemini\antigravity`, catalog at `conversation_summaries.db`.
 2. **Antigravity IDE (VS Code Fork)**: Root at `%USERPROFILE%\.gemini\antigravity-ide`, catalog in VS Code state store `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb` under key `antigravityUnifiedStateSync.trajectorySummaries`.
+3. **Antigravity CLI (Terminal)**: Root at `%USERPROFILE%\.gemini\antigravity-cli`, catalog at `conversation_summaries.db`.
 
 ### Storage Locations:
 
