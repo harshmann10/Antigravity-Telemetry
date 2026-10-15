@@ -10,7 +10,10 @@ const {
   selectActiveConversation,
   setCustomSqlitePath,
   dumpAnalysisCache,
-  loadAnalysisCache
+  loadAnalysisCache,
+  isCacheDirty,
+  resetCacheDirty,
+  prepareConversationsForWebview
 } = require('./telemetryReader');
 const { getDashboardHtml } = require('./dashboardHtml');
 
@@ -48,7 +51,8 @@ function getConfig() {
     deleteToRecycleBin: cfg.get('deleteToRecycleBin', true),
     workspaceFilter: cfg.get('workspaceFilter', 'current'),
     sqlitePath: cfg.get('sqlitePath', ''),
-    dataSource: cfg.get('dataSource', 'auto')
+    dataSource: cfg.get('dataSource', 'auto'),
+    enableCache: cfg.get('enableCache', true)
   };
 }
 
@@ -88,6 +92,108 @@ function formatTokens(num) {
   return String(num);
 }
 
+let lastTelemetrySignature = '';
+let activeWebviewConvId = null;
+let cacheSaveTimer = null;
+
+function computeTelemetrySignature(state) {
+  if (!state || !state.conversations) return '';
+  const convs = state.conversations;
+  const parts = [
+    String(convs.length),
+    state.active ? state.active.id : '',
+    state.sqliteAvailable ? '1' : '0',
+    state.catalogAvailable ? '1' : '0'
+  ];
+  for (const c of convs) {
+    const s = c.stats;
+    parts.push(`${c.id}:${c.mtimeMs}:${s ? s.calls : 0}:${s ? s.grandTotal : 0}:${c.isRunning ? 1 : 0}:${c.title}`);
+  }
+  return parts.join('|');
+}
+
+function getCacheFilePath() {
+  if (extensionContext && extensionContext.globalStorageUri) {
+    const storageDir = extensionContext.globalStorageUri.fsPath;
+    if (!fs.existsSync(storageDir)) {
+      try {
+        fs.mkdirSync(storageDir, { recursive: true });
+      } catch (err) {
+        log(`Failed to create storage directory ${storageDir}: ${err.message}`);
+      }
+    }
+    return path.join(storageDir, 'telemetry-cache.json');
+  }
+  return null;
+}
+
+function restoreCacheFromDisk() {
+  if (!getConfig().enableCache) {
+    // If user disabled persistent cache, remove any stale on-disk file
+    const filePath = getCacheFilePath();
+    if (filePath && fs.existsSync(filePath)) {
+      try { fs.unlinkSync(filePath); } catch { }
+    }
+    return;
+  }
+
+  // 1. Migrate legacy cache from globalState if present from v1.1.0
+  if (extensionContext && extensionContext.globalState) {
+    try {
+      const legacyStateCache = extensionContext.globalState.get('telemetryAnalysisCache');
+      if (legacyStateCache) {
+        // Clean up legacy key so it stops occupying RPC/database space over Remote SSH
+        extensionContext.globalState.update('telemetryAnalysisCache', undefined);
+        loadAnalysisCache(legacyStateCache);
+        flushCacheToDisk();
+        return;
+      }
+    } catch { }
+  }
+
+  // 2. Read from isolated local extension storage on disk (0 network bytes across Remote SSH)
+  const filePath = getCacheFilePath();
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const data = JSON.parse(raw);
+      loadAnalysisCache(data);
+    } catch (err) {
+      log(`Failed to read telemetry cache from disk: ${err.message}`);
+    }
+  }
+}
+
+function scheduleSaveCache() {
+  if (!getConfig().enableCache) return;
+  if (cacheSaveTimer) return;
+  cacheSaveTimer = setTimeout(() => {
+    cacheSaveTimer = null;
+    flushCacheToDisk();
+  }, 3000);
+}
+
+function flushCacheToDisk() {
+  if (cacheSaveTimer) {
+    clearTimeout(cacheSaveTimer);
+    cacheSaveTimer = null;
+  }
+  if (!getConfig().enableCache) return;
+  if (!isCacheDirty()) return;
+  const filePath = getCacheFilePath();
+  if (!filePath) return;
+  try {
+    const dump = dumpAnalysisCache();
+    const json = JSON.stringify(dump);
+    const tmpPath = `${filePath}.tmp`;
+    fs.writeFileSync(tmpPath, json, 'utf8');
+    fs.renameSync(tmpPath, filePath);
+    resetCacheDirty();
+  } catch (err) {
+    log(`Failed to write telemetry cache to disk: ${err.message}`);
+  }
+}
+
 function updateTelemetry(options = {}) {
   const force = Boolean(options && options.force);
   // A full scan can take ~2s on a cold cache; without this guard the file watcher, the poll
@@ -123,22 +229,33 @@ function updateTelemetry(options = {}) {
       log('The conversation catalog (conversation_summaries.db) could not be read. Chat titles are ' +
         'unavailable and orphan detection is disabled until it can be read again.');
     }
-    updateStatusBar();
-    if (currentPanel) {
-      const active = getActiveConversation();
-      currentPanel.webview.postMessage({
-        type: 'telemetryUpdate',
-        data: telemetryState.conversations,
-        activeId: active ? active.id : (telemetryState.active ? telemetryState.active.id : null),
-        currentWorkspaceName: getCurrentWorkspaceName(),
-        currentWorkspacePaths: getCurrentWorkspaceFolders()
-      });
-    }
-    if (telemetryState && telemetryState.conversations && extensionContext) {
-      try {
-        const dump = dumpAnalysisCache();
-        extensionContext.globalState.update('telemetryAnalysisCache', dump);
-      } catch { }
+
+    const signature = computeTelemetrySignature(telemetryState);
+    const hasChanged = signature !== lastTelemetrySignature;
+    lastTelemetrySignature = signature;
+
+    if (hasChanged || force) {
+      updateStatusBar();
+
+      // Only post to webview if panel exists AND is currently visible in the editor group
+      if (currentPanel && currentPanel.visible) {
+        const active = getActiveConversation();
+        const activeId = active ? active.id : (telemetryState.active ? telemetryState.active.id : null);
+        const targetId = activeWebviewConvId || activeId;
+        const payloadData = prepareConversationsForWebview(telemetryState.conversations, targetId);
+
+        currentPanel.webview.postMessage({
+          type: 'telemetryUpdate',
+          data: payloadData,
+          activeId: targetId,
+          currentWorkspaceName: getCurrentWorkspaceName(),
+          currentWorkspacePaths: getCurrentWorkspaceFolders()
+        });
+      }
+
+      if (isCacheDirty()) {
+        scheduleSaveCache();
+      }
     }
   } catch (err) {
     log(`Refresh failed: ${err && err.stack ? err.stack : err}`);
@@ -378,6 +495,13 @@ async function showMenu() {
     action: 'setSqlitePath'
   });
 
+  const cacheActive = getConfig().enableCache;
+  items.push({
+    label: `$(archive) Persistent Startup Cache: ${cacheActive ? 'Enabled' : 'Disabled'}`,
+    description: cacheActive ? 'Sub-50ms instant startup cache is active. Click to disable.' : 'Persistent cache disabled (fresh scan on startup). Click to enable.',
+    action: 'toggleCache'
+  });
+
   items.push({
     label: '$(sync) Refresh Telemetry Now',
     description: 'Re-scan local databases for latest turn data',
@@ -405,6 +529,10 @@ async function showMenu() {
     promptSwitchDataSource();
   } else if (selected.action === 'setSqlitePath') {
     promptSetSqlitePath();
+  } else if (selected.action === 'toggleCache') {
+    const nextVal = !getConfig().enableCache;
+    await vscode.workspace.getConfiguration('antigravity').update('enableCache', nextVal, vscode.ConfigurationTarget.Global);
+    vscode.window.showInformationMessage(`Antigravity persistent cache ${nextVal ? 'enabled' : 'disabled'}.`);
   }
 }
 
@@ -539,13 +667,14 @@ async function promptDeleteConversation() {
 
 function openDashboard(selectedConvId) {
   const active = getActiveConversation();
-  const targetId = selectedConvId || (active ? active.id : (telemetryState.conversations[0] ? telemetryState.conversations[0].id : ''));
+  const targetId = selectedConvId || activeWebviewConvId || (active ? active.id : (telemetryState.conversations[0] ? telemetryState.conversations[0].id : ''));
+  activeWebviewConvId = targetId;
 
   if (currentPanel) {
     currentPanel.reveal(vscode.ViewColumn.Active);
     currentPanel.webview.postMessage({
       type: 'telemetryUpdate',
-      data: telemetryState.conversations,
+      data: prepareConversationsForWebview(telemetryState.conversations, targetId),
       activeId: targetId,
       workspaceFilter: getConfig().workspaceFilter,
       currentWorkspaceName: getCurrentWorkspaceName(),
@@ -571,20 +700,30 @@ function openDashboard(selectedConvId) {
     currentPanel.iconPath = vscode.Uri.joinPath(mediaRoot, 'icon.png');
   }
 
+  currentPanel.onDidChangeViewState(e => {
+    if (e.webviewPanel.visible) {
+      updateTelemetry({ force: true });
+    }
+  });
+
   const cssUri = mediaRoot ? currentPanel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'dashboard.css')).toString() : '';
   const iconUri = mediaRoot ? currentPanel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'icon.png')).toString() : '';
   const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
-  currentPanel.webview.html = getDashboardHtml(telemetryState.conversations, targetId, {
-    cssUri,
-    iconUri,
-    nonce,
-    cspSource: currentPanel.webview.cspSource,
-    deleteToRecycleBin: getConfig().deleteToRecycleBin,
-    workspaceFilter: getConfig().workspaceFilter,
-    currentWorkspaceName: getCurrentWorkspaceName(),
-    currentWorkspacePaths: getCurrentWorkspaceFolders()
-  });
+  currentPanel.webview.html = getDashboardHtml(
+    prepareConversationsForWebview(telemetryState.conversations, targetId),
+    targetId,
+    {
+      cssUri,
+      iconUri,
+      nonce,
+      cspSource: currentPanel.webview.cspSource,
+      deleteToRecycleBin: getConfig().deleteToRecycleBin,
+      workspaceFilter: getConfig().workspaceFilter,
+      currentWorkspaceName: getCurrentWorkspaceName(),
+      currentWorkspacePaths: getCurrentWorkspaceFolders()
+    }
+  );
 
   currentPanel.webview.onDidReceiveMessage(async message => {
     if (message.command === 'deleteConversation') {
@@ -593,17 +732,31 @@ function openDashboard(selectedConvId) {
       try {
         const res = deleteConversation(conversationId, { recycleBin: recycle });
         await reportDeleteResult(res, title, recycle);
-        updateTelemetry();
+        updateTelemetry({ force: true });
       } catch (err) {
         vscode.window.showErrorMessage(`Failed to delete conversation: ${err.message}`);
       }
     } else if (message.command === 'refresh') {
       updateTelemetry({ force: true });
+    } else if (message.command === 'selectConversation') {
+      activeWebviewConvId = message.conversationId;
+    } else if (message.command === 'getTimeline') {
+      activeWebviewConvId = message.conversationId;
+      const conv = telemetryState.conversations.find(c => c.id === message.conversationId);
+      const timeline = (conv && conv.stats && conv.stats.contextTimeline) ? conv.stats.contextTimeline : [];
+      if (currentPanel && currentPanel.visible) {
+        currentPanel.webview.postMessage({
+          type: 'timelineData',
+          conversationId: message.conversationId,
+          timeline
+        });
+      }
     }
   });
 
   currentPanel.onDidDispose(() => {
     currentPanel = null;
+    activeWebviewConvId = null;
   });
 }
 
@@ -611,12 +764,9 @@ function activate(context) {
   extensionUri = context.extensionUri;
   extensionContext = context;
 
-  // Restore persistent telemetry cache for instant startup (< 50ms)
+  // Restore persistent telemetry cache from local extension storage (< 50ms, 0 network bytes)
   try {
-    const savedCache = context.globalState.get('telemetryAnalysisCache');
-    if (savedCache) {
-      loadAnalysisCache(savedCache);
-    }
+    restoreCacheFromDisk();
   } catch (err) {
     log(`Failed to load persistent telemetry cache: ${err.message}`);
   }
@@ -645,7 +795,7 @@ function activate(context) {
 
   function setupWatchers() {
     for (const w of activeWatchers) {
-      try { w.close(); } catch {}
+      try { w.close(); } catch { }
     }
     activeWatchers = [];
 
@@ -706,7 +856,7 @@ function activate(context) {
   context.subscriptions.push({
     dispose: () => {
       for (const w of activeWatchers) {
-        try { w.close(); } catch {}
+        try { w.close(); } catch { }
       }
       activeWatchers = [];
     }
@@ -734,6 +884,17 @@ function activate(context) {
       if (e.affectsConfiguration('antigravity.sqlitePath')) {
         setCustomSqlitePath(getConfig().sqlitePath);
       }
+      if (e.affectsConfiguration('antigravity.enableCache')) {
+        const enabled = getConfig().enableCache;
+        if (!enabled) {
+          const filePath = getCacheFilePath();
+          if (filePath && fs.existsSync(filePath)) {
+            try { fs.unlinkSync(filePath); } catch { }
+          }
+        } else {
+          scheduleSaveCache();
+        }
+      }
       if (e.affectsConfiguration('antigravity.dataSource')) {
         setupWatchers();
         updateTelemetry();
@@ -748,14 +909,9 @@ function activate(context) {
 }
 
 function deactivate() {
-  if (extensionContext) {
-    try {
-      const dump = dumpAnalysisCache();
-      extensionContext.globalState.update('telemetryAnalysisCache', dump);
-    } catch { }
-  }
+  flushCacheToDisk();
   for (const w of activeWatchers) {
-    try { w.close(); } catch {}
+    try { w.close(); } catch { }
   }
   activeWatchers = [];
   if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }

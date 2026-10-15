@@ -533,8 +533,29 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           renderDetail();
           updateGlobalHeaders();
         }
+      } else if (msg && msg.type === 'timelineData') {
+        const target = CONVERSATIONS.find(c => c.id === msg.conversationId);
+        if (target && target.stats) {
+          target.stats.contextTimeline = msg.timeline || [];
+        }
+        if (selectedId === msg.conversationId) {
+          currentTimeline = msg.timeline || [];
+          renderChart(currentTimeline);
+        }
       } else if (msg && msg.type === 'telemetryUpdate') {
+        const oldTimelines = new Map();
+        for (const c of CONVERSATIONS) {
+          if (c.stats && c.stats.contextTimeline && c.stats.contextTimeline.length > 0) {
+            oldTimelines.set(c.id, c.stats.contextTimeline);
+          }
+        }
         CONVERSATIONS = msg.data;
+        for (const c of CONVERSATIONS) {
+          if ((!c.stats || !c.stats.contextTimeline || c.stats.contextTimeline.length === 0) && oldTimelines.has(c.id)) {
+            if (!c.stats) c.stats = {};
+            c.stats.contextTimeline = oldTimelines.get(c.id);
+          }
+        }
         if (msg.activeId) {
           currentActiveId = msg.activeId;
         }
@@ -932,6 +953,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
     function selectConv(id) {
       selectedId = id;
+      try {
+        vscode.postMessage({ command: 'selectConversation', conversationId: id });
+        const conv = CONVERSATIONS.find(c => c.id === id);
+        if (conv && conv.stats && (!conv.stats.contextTimeline || conv.stats.contextTimeline.length === 0) && conv.stats.calls > 0) {
+          vscode.postMessage({ command: 'getTimeline', conversationId: id });
+        }
+      } catch {}
       populateDropdown();
       renderDetail();
       if (currentTab === 'list') {

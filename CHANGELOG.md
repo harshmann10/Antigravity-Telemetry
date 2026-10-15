@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.1.1] - 2026-10-15
+
+### ⚡ Remote SSH Bandwidth Optimization & Local Storage Architecture
+
+> **Critical patch release** resolving excessive network bandwidth consumption over VS Code Remote - SSH, WSL, and Dev Containers.
+
+#### 🌐 Remote SSH Bandwidth & Traffic Fix
+- **Isolated Local Disk Cache**: Migrated the persistent telemetry cache from `context.globalState` (which transmitted multi-megabyte payloads across the Remote SSH RPC tunnel) to isolated extension local file storage (`context.globalStorageUri`). Cache persistence now generates **0 bytes** of network traffic across remote connections.
+- **Automatic Legacy Cache Migration**: Existing installations automatically migrate and purge the bloated key from `globalState`, immediately freeing remote RPC bandwidth and cleaning internal state databases.
+- **Selective Webview Timeline Delivery**: The Webview payload now strips heavy `contextTimeline` turn arrays from inactive conversations, delivering 1:1 turn details strictly for the currently selected session. Reduces Webview IPC data size from ~1.2 MB down to ~150 KB (**~88–95% payload reduction**).
+- **On-Demand Timeline Loading & Webview Caching**: Switching conversations in the dashboard fetches the selected session's timeline on-demand and caches it in webview memory, avoiding redundant network roundtrips.
+- **Configurable Persistent Cache**: Added `antigravity.enableCache` setting and QuickMenu toggle (`Persistent Startup Cache: Enabled / Disabled`) allowing users to disable disk caching completely with instant cleanup of cache files.
+- **Webview Visibility Guard**: Telemetry updates are suppressed when the dashboard panel is hidden or minimized behind other editor tabs, resuming immediately when the tab is brought back into view.
+- **State Signature Dirty-Checking**: Suppresses redundant status bar updates, webview broadcasts, and disk writes during the 10-second polling cycle when conversations have not changed on disk.
+
+---
+
 ## [1.1.0] - 2026-10-12
 
 ### 🛸 Standalone Antigravity IDE & Multi-Root Support

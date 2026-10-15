@@ -3,6 +3,40 @@
 Technical and architectural notes for Antigravity Telemetry, grouped by development and review phases.
 For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 
+## 2026-10-15 — Phase 5: Remote SSH Bandwidth Optimization & Local Storage Architecture
+
+**Task 1 — Root Cause Diagnosis: Remote SSH Traffic Explosion**
+- Investigated user issue report: `"Bug: The new version abnormally transfers a large amount of traffic."` over Remote SSH.
+- Diagnosed that in VS Code's client-server architecture (Remote SSH, WSL, Dev Containers), the extension host runs remotely while the UI runs locally.
+- Identified that `context.globalState.update('telemetryAnalysisCache', dump)` was executing on every 10s heartbeat and every file watcher debounce, serializing a multi-megabyte JSON cache across the SSH tunnel RPC socket.
+- Identified that `state.vscdb` in `globalStorage` was watched by `fs.watch`, creating a feedback loop where `globalState.update` triggered the watcher, which called `updateTelemetry()`, which updated `globalState`.
+- Identified that `currentPanel.webview.postMessage` broadcast full un-decimated `contextTimeline` turn arrays for dozens of inactive historical conversations on every update even when the dashboard tab was hidden.
+
+**Task 2 — Isolated Local Disk Cache Persistence (`globalStorageUri`)**
+- Migrated cache persistence from `context.globalState` to isolated local file storage on disk using `extensionContext.globalStorageUri` (`telemetry-cache.json`).
+- In Remote SSH, `globalStorageUri.fsPath` resides entirely on the remote host filesystem. Network traffic over the SSH tunnel: **0 bytes**.
+- Added automatic migration: on startup, detects legacy `telemetryAnalysisCache` in `globalState`, imports it, and purges the key via `globalState.update(..., undefined)`.
+- Added atomic disk writes (`.tmp` file write + atomic `fs.renameSync`) with debounced 3-second save throttling and flush on `deactivate()`.
+- Added `isCacheDirty()` tracking in `telemetryReader.js` so unchanged cycles generate zero disk writes.
+
+**Task 3 — Selective Webview Timeline Delivery & On-Demand Loading**
+- Built `prepareConversationsForWebview(conversations, selectedId)`: strips heavy `contextTimeline` arrays from all inactive conversations, delivering full 1:1 turn details strictly for the currently selected session.
+- Reduced Webview IPC payload size by ~88–95% (e.g. from 1,217 KB to 169 KB).
+- Added on-demand timeline loading: when a user selects a session in the dashboard whose timeline was stripped, the webview sends `{ command: 'getTimeline', conversationId }`, and the extension replies with `{ type: 'timelineData', ... }`.
+- Webview caches loaded timelines locally in memory; subsequent `telemetryUpdate` messages preserve cached timelines rather than clearing them.
+
+**Task 4 — Webview Visibility Guard & State Signature Dirty-Checking**
+- Added visibility guard: `currentPanel && currentPanel.visible`. Telemetry update messages are suppressed while the dashboard panel is hidden or minimized behind other editor tabs.
+- Hooked `currentPanel.onDidChangeViewState` to immediately send a fresh update when the panel is brought back into view.
+- Added `computeTelemetrySignature(state)` dirty-checking: if conversation counts, active IDs, modification times, and turn totals have not changed, `updateTelemetry` exits early, suppressing redundant status bar DOM mutations, webview messages, and disk writes.
+
+**Task 5 — Configurable Persistent Cache Setting (`antigravity.enableCache`)**
+- Added `antigravity.enableCache` boolean setting (default `true`) to `package.json` with configuration change listener in `extension.js`.
+- Added interactive QuickMenu toggle: `$(archive) Persistent Startup Cache: Enabled / Disabled`.
+- When disabled, immediately cleans up any existing `telemetry-cache.json` on disk and bypasses disk writes, ensuring fresh on-demand SQLite parsing.
+
+---
+
 ## 2026-10-11 — Phase 4: Antigravity IDE & Multi-Root Telemetry Support (Issue #1)
 
 **Task 1 — Host-Aware Installation Discovery & User Configuration**

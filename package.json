@@ -2,7 +2,7 @@
   "name": "antigravity-telemetry",
   "displayName": "Antigravity Telemetry - Context & Token Monitor",
   "description": "Live context window usage, prompt cache hit rate, and token intelligence for Antigravity",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "publisher": "HarshMann",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -73,6 +73,11 @@
           ],
           "default": "auto",
           "markdownDescription": "Source of Antigravity telemetry: 'auto' (detects active editor: Antigravity IDE when in IDE, Antigravity Extension when in VS Code), 'ide' (Antigravity IDE standalone), 'extension' (Antigravity Extension in VS Code), or 'both' (merges both environments)."
+        },
+        "antigravity.enableCache": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Enable persistent disk caching for instant startup (< 50ms). When disabled, no cache files are written to disk and telemetry is freshly re-scanned from SQLite on startup."
         }
       }
     },

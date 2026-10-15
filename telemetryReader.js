@@ -39,10 +39,21 @@ let vscdbCache = {
   map: null
 };
 
+let cacheIsDirty = false;
+
 function clearAnalysisCache() {
   analysisCache.clear();
   summariesCache = { mtimeMs: 0, size: 0, walSignature: '', map: null };
   vscdbCache = { mtimeMs: 0, size: 0, map: null };
+  cacheIsDirty = true;
+}
+
+function isCacheDirty() {
+  return cacheIsDirty;
+}
+
+function resetCacheDirty() {
+  cacheIsDirty = false;
 }
 
 function dumpAnalysisCache() {
@@ -92,6 +103,29 @@ function loadAnalysisCache(cached) {
       map: cached.vscdb.map
     };
   }
+  cacheIsDirty = false;
+}
+
+// Prepares conversations payload for IPC transfer by stripping heavy contextTimeline
+// arrays from all inactive conversations. Only the currently selected conversation retains
+// its full turn timeline, saving 95%+ network bandwidth over Remote SSH connections.
+function prepareConversationsForWebview(conversations, selectedId) {
+  if (!Array.isArray(conversations)) return [];
+  return conversations.map(c => {
+    if (c.id === selectedId) {
+      return c;
+    }
+    if (!c.stats || !c.stats.contextTimeline || c.stats.contextTimeline.length === 0) {
+      return c;
+    }
+    return {
+      ...c,
+      stats: {
+        ...c.stats,
+        contextTimeline: []
+      }
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -450,9 +484,9 @@ function getConversationSummaries(summariesDb, sqliteBin) {
 
   const walSig = walSignatureOf(summariesDb);
   if (summariesCache.map &&
-      summariesCache.mtimeMs === stat.mtimeMs &&
-      summariesCache.size === stat.size &&
-      summariesCache.walSignature === walSig) {
+    summariesCache.mtimeMs === stat.mtimeMs &&
+    summariesCache.size === stat.size &&
+    summariesCache.walSignature === walSig) {
     return summariesCache.map;
   }
 
@@ -507,6 +541,7 @@ function getConversationSummaries(summariesDb, sqliteBin) {
       walSignature: walSig,
       map
     };
+    cacheIsDirty = true;
     return map;
   } catch (err) {
     // Fallback if -json is unsupported in ancient sqlite3 versions
@@ -575,6 +610,7 @@ function getConversationSummaries(summariesDb, sqliteBin) {
         walSignature: walSig,
         map
       };
+      cacheIsDirty = true;
       return map;
     } catch {
       return null;
@@ -743,7 +779,7 @@ function parseVscdbTrajectorySummaries(buf) {
             if (summary) {
               map[cId] = { id: cId, ...summary };
             }
-          } catch {}
+          } catch { }
         }
       }
     } else if (wire === 0) {
@@ -765,8 +801,8 @@ function getVscdbSummaries(vscdbPath, sqliteBin) {
   }
 
   if (vscdbCache.map &&
-      vscdbCache.mtimeMs === stat.mtimeMs &&
-      vscdbCache.size === stat.size) {
+    vscdbCache.mtimeMs === stat.mtimeMs &&
+    vscdbCache.size === stat.size) {
     return vscdbCache.map;
   }
 
@@ -801,6 +837,7 @@ function getVscdbSummaries(vscdbPath, sqliteBin) {
       size: stat.size,
       map
     };
+    cacheIsDirty = true;
     return map;
   } catch {
     return null;
@@ -925,7 +962,7 @@ function extractInDbMetadata(dbPath, sqliteBin) {
         if (rows[0].hex_step) prompt = extractInDbPrompt(Buffer.from(rows[0].hex_step, 'hex'));
       }
     }
-  } catch {}
+  } catch { }
 
   const wsRaw = JSON.stringify(wsUris);
   const wsInfo = parseWorkspaceInfo(wsRaw);
@@ -1565,7 +1602,7 @@ function readAllTelemetry(options = {}) {
           if (walStat.mtimeMs > mtimeMs) {
             mtimeMs = walStat.mtimeMs;
           }
-        } catch {}
+        } catch { }
         fileEntries.push({ f, fullPath, cId: f.replace(/\.db$/, ''), stat, mtimeMs, walSignature, root });
       } catch { }
     }
@@ -1620,6 +1657,7 @@ function readAllTelemetry(options = {}) {
         storageCheckedAt: entry ? entry.storageCheckedAt : 0,
         inDbMetadata: entry ? entry.inDbMetadata : null
       });
+      cacheIsDirty = true;
     }
 
     if (!stats || stats.calls === 0) continue;
@@ -1634,6 +1672,7 @@ function readAllTelemetry(options = {}) {
     if (needsStorageWalk) {
       cacheEntry.storageBytes = getConversationStorageSize(cId, root.antigravityDir);
       cacheEntry.storageCheckedAt = now;
+      cacheIsDirty = true;
     }
 
     const storageBytes = cacheEntry.storageBytes || 0;
@@ -1648,6 +1687,7 @@ function readAllTelemetry(options = {}) {
       if (!inDbMeta || changed) {
         inDbMeta = extractInDbMetadata(fullPath, sqliteBin);
         cacheEntry.inDbMetadata = inDbMeta;
+        cacheIsDirty = true;
       }
     }
 
@@ -1703,7 +1743,10 @@ function readAllTelemetry(options = {}) {
 
   // Drop cache entries for conversations that no longer exist.
   for (const key of analysisCache.keys()) {
-    if (!seen.has(key)) analysisCache.delete(key);
+    if (!seen.has(key)) {
+      analysisCache.delete(key);
+      cacheIsDirty = true;
+    }
   }
 
   // Sort by most recently modified
@@ -1732,6 +1775,9 @@ module.exports = {
   setCustomSqlitePath,
   dumpAnalysisCache,
   loadAnalysisCache,
+  isCacheDirty,
+  resetCacheDirty,
+  prepareConversationsForWebview,
   // exposed for tooling / self-check scripts
   analyzeConversation,
   parseProto,

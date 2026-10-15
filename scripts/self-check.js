@@ -356,6 +356,30 @@ function testRealData() {
     check(`restored cache yields fast read (${restoredMs}ms)`, restoredMs < Math.max(200, coldMs / 4), restoredMs + 'ms');
     check('restored cache yields identical conversation count', restored.conversations.length === warm.conversations.length);
 
+    // cache dirty tracking: safe local-only disk persistence
+    check('isCacheDirty exported', typeof reader.isCacheDirty === 'function');
+    check('resetCacheDirty exported', typeof reader.resetCacheDirty === 'function');
+    reader.loadAnalysisCache(dump);
+    check('loadAnalysisCache resets dirty flag', reader.isCacheDirty() === false);
+    reader.clearAnalysisCache();
+    check('clearAnalysisCache marks cache dirty', reader.isCacheDirty() === true);
+    reader.resetCacheDirty();
+    check('resetCacheDirty sets dirty flag to false', reader.isCacheDirty() === false);
+    reader.loadAnalysisCache(dump);
+
+    // selective timeline delivery: payload minimization over remote SSH
+    check('prepareConversationsForWebview exported', typeof reader.prepareConversationsForWebview === 'function');
+    const selectedTarget = warm.conversations[0] ? warm.conversations[0].id : '';
+    const optimized = reader.prepareConversationsForWebview(warm.conversations, selectedTarget);
+    check('optimized conversations count equals source count', optimized.length === warm.conversations.length);
+    const selOpt = optimized.find(c => c.id === selectedTarget);
+    check('selected conversation retains full timeline', selOpt && selOpt.stats && Array.isArray(selOpt.stats.contextTimeline) && selOpt.stats.contextTimeline.length > 0);
+    const nonSelected = optimized.filter(c => c.id !== selectedTarget && c.stats);
+    check('inactive conversations have empty contextTimeline', nonSelected.every(c => Array.isArray(c.stats.contextTimeline) && c.stats.contextTimeline.length === 0));
+    const fullJson = JSON.stringify(warm.conversations);
+    const optJson = JSON.stringify(optimized);
+    check(`selective timeline reduces payload size (from ${Math.round(fullJson.length / 1024)}KB to ${Math.round(optJson.length / 1024)}KB)`, optJson.length < fullJson.length * 0.5);
+
     // incremental parity on a copy of a real conversation (never the original)
     const withRows = cold.conversations
         .filter(c => !c.isOrphan && c.stats.calls > 100)
@@ -916,6 +940,42 @@ function testDashboardStability() {
     });
     check('refreshLabel shows Updated after telemetryUpdate', refreshLabel.textContent === 'Updated');
     check('refreshIcon has text-emerald-400 class on update', refreshIcon.classList.classes.has('text-emerald-400'));
+
+    // 8. On-demand timeline retrieval and webview timeline caching
+    const anotherConv = realConvs.find(c => c.id !== initialActive && c.stats && c.stats.calls > 0);
+    if (anotherConv) {
+        // Strip timeline to simulate remote payload
+        anotherConv.stats.contextTimeline = [];
+        vm.runInContext(`selectConv('${anotherConv.id}')`, ctx);
+        check('selectConv sends selectConversation command', postedMessages.some(m => m && m.command === 'selectConversation' && m.conversationId === anotherConv.id));
+        check('selectConv requests timeline on-demand for conversation with empty timeline', postedMessages.some(m => m && m.command === 'getTimeline' && m.conversationId === anotherConv.id));
+
+        // Delivery of timelineData populates the conversation's timeline
+        const mockTimeline = [{ turn: 1, input: 1234, cached: 500, fresh: 734, output: 100, thinking: 0 }];
+        messageHandler({
+            data: {
+                type: 'timelineData',
+                conversationId: anotherConv.id,
+                timeline: mockTimeline
+            }
+        });
+        const currentConv = vm.runInContext(`CONVERSATIONS.find(c => c.id === '${anotherConv.id}')`, ctx);
+        check('timelineData stores timeline in webview CONVERSATIONS', currentConv && currentConv.stats && currentConv.stats.contextTimeline.length === 1 && currentConv.stats.contextTimeline[0].input === 1234);
+
+        // Subsequent telemetryUpdate with empty timeline for this conversation preserves cached timeline
+        const updatedConvs = realConvs.map(c => c.id === anotherConv.id ? { ...c, stats: { ...c.stats, contextTimeline: [] } } : c);
+        messageHandler({
+            data: {
+                type: 'telemetryUpdate',
+                data: updatedConvs,
+                activeId: initialActive,
+                currentWorkspaceName: 'web dev',
+                currentWorkspacePaths: ['g:\\web dev']
+            }
+        });
+        const retainedConv = vm.runInContext(`CONVERSATIONS.find(c => c.id === '${anotherConv.id}')`, ctx);
+        check('telemetryUpdate preserves cached timeline in webview', retainedConv && retainedConv.stats && retainedConv.stats.contextTimeline.length === 1);
+    }
 }
 
 // 9. configuration & sqlite resolution
@@ -1083,9 +1143,14 @@ function testChangelogExtraction() {
 
     // Default extraction (latest section from user-facing CHANGELOG.md)
     const latest = extractChangelog();
-    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.1.0'), latest.title);
-    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Antigravity IDE') && latest.notes.includes('Multi-Root'), latest.notes.slice(0, 100));
+    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.1.1'), latest.title);
+    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Remote SSH') && latest.notes.includes('Bandwidth'), latest.notes.slice(0, 100));
     check('strips trailing horizontal rules', !latest.notes.endsWith('---'));
+
+    // Specific tag extraction (e.g. v1.1.0)
+    const v110 = extractChangelog('v1.1.0');
+    check('extracts specific v1.1.0 section by tag', v110.title.includes('1.1.0'), v110.title);
+    check('v1.1.0 notes contain feature categories', v110.notes.includes('Antigravity IDE') && v110.notes.includes('Multi-Root'));
 
     // Specific tag extraction (e.g. v1.0.2)
     const v102 = extractChangelog('v1.0.2');
