@@ -82,11 +82,19 @@ Opens side-by-side with your code (`Ctrl + Shift + P` $\rightarrow$ `Antigravity
   - **Intelligent Compaction Qualification**: Automatically filters out transient single-turn planner V-dips (intermediate steps where tool outputs are temporarily pruned before resuming full context), ensuring only authentic session compactions increment counters.
   - **Interactive Crosshairs & Hover Tooltip**: Track precise turn numbers, context %, cached volume, fresh additions, and generation output.
   - **Anti-Flicker Memoization**: Skips redundant SVG re-renders during background polling so chart tooltips never jump or dismiss while hovering.
-- **Session Intelligence Grid**:
+- **🩺 Context Health Diagnostics & Segmented Allocation**:
+  - **Hero Capacity & Headroom Bar**: Live token usage %, absolute consumed tokens, and remaining token headroom.
+  - **Dynamic Status Badge**: Automatic shift between `Healthy` (<60%), `Moderate Load` (60–85%), and `Compaction Alert` (>85%).
+  - **Segmented Allocation Bar**: Proportional color-coded visualization for Prompts, Replies, Codebase Files, Commands, Images, and Headroom.
+  - **Tool Execution Footprint**: High-density cards tracking Assistant Replies, Files Read in memory, Commands executed, and Images analyzed.
+- **📁 Files Touched Drawer with Real-Time Search**:
+  - Inspect all files read in memory and modified during the session.
+  - Instant client-side search input with color-coded file extension pills (`.js`, `.ts`, `.py`, `.json`, etc.).
+- **⚡ Turn Dynamics & Cache Intelligence**:
+  - **Effective Latency Multiplier**: Displays real-world prompt cache speedup (`~X.Xx faster`).
+  - **Net Trajectory Growth**: Tracks token expansion relative to session baseline (`+X.Xk tok net`).
   - **⚡ Last Turn Activity**: Delta fresh tokens added, output, and compaction state.
-  - **📊 Per-Turn Averages**: Average context, output, thinking tokens, and cache volume.
   - **🛡️ Cache Performance**: Total hits vs. calls, cold start misses, and compaction count.
-  - **🏔️ Session Peaks**: Peak context reached (% of ceiling), peak generation, and peak reasoning tokens.
 - **🔄 On-Demand Manual Refresh**: Click the header refresh button anytime for immediate synchronization with tactile press feedback and live status confirmation.
 
 ---
@@ -124,10 +132,10 @@ Antigravity Telemetry provides true, verified cleanup:
 
 ---
 
-### 5. 🛸 Multi-Root Support: Antigravity IDE, Extension & CLI *(Preview / In Progress)*
+### 5. 🛸 Multi-Root Support: Antigravity IDE, Extension & CLI
 
 - **Host-Aware Discovery**: Automatically detects whether you are working in the standalone **Antigravity IDE** (`~/.gemini/antigravity-ide`) or **VS Code / VSCodium** (`~/.gemini/antigravity`), loading the corresponding sessions with zero configuration.
-- **Antigravity CLI Support (In Progress)**: Discovers terminal `agy` CLI sessions residing in `~/.gemini/antigravity-cli`. In `auto` mode, active or matching CLI sessions are integrated without hijacking host editor chats when idle.
+- **Antigravity CLI Support**: Discovers terminal `agy` CLI sessions residing in `~/.gemini/antigravity-cli`. In `auto` mode, active or matching CLI sessions are integrated without hijacking host editor chats when idle.
 - **Unified All Mode**: Set `antigravity.dataSource: "all"` anytime to view sessions from all environments merged side-by-side with clear `IDE`, `Ext`, and `CLI` visual badges and timestamp deduplication.
 - **Antigravity IDE Catalog Integration (`state.vscdb`)**: Decodes session summaries directly from Antigravity IDE's state database (`%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`), resolving titles, step counts, timestamps, and workspace mappings.
 - **In-DB Self-Description Fallback**: In-flight or newly opened sessions in Antigravity IDE are automatically self-described using internal `trajectory_metadata_blob` and `steps` tables, ensuring live sessions are recognized immediately and never falsely marked as ghost chats.

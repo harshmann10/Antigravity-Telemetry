@@ -351,25 +351,88 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         </div>
       </div>
 
-      <!-- SESSION OPERATIONS & ACTIVITY (ISSUE #3 /context metrics) -->
-      <div id="activityCard" class="p-3 card-bg border border-color rounded-xl space-y-2.5">
-        <div class="flex flex-wrap items-center justify-between gap-2">
+      <!-- CONTEXT HEALTH & CODEBASE IMPACT (CLI /context Experience & Activity) -->
+      <div id="activityCard" class="p-3 card-bg border border-color rounded-xl space-y-3">
+        <!-- Top Bar: Title & Controls -->
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-color pb-2.5">
           <div class="flex items-center gap-2">
             <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
             <div>
-              <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Session Operations & Activity</h3>
-              <p class="text-[10px] muted-color">Operational telemetry, tool invocations & codebase impact</p>
+              <div class="flex items-center gap-2">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Context Health & Codebase Impact</h3>
+                <span id="contextHealthStatusBadge" class="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Healthy</span>
+              </div>
+              <p class="text-[10px] muted-color">Live context allocation, token headroom & codebase operations</p>
             </div>
           </div>
-          <button id="actToggleFilesBtn" class="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-semibold inner-bg border border-color hover:border-blue-500/40 text-[var(--vscode-editor-foreground,#f4f4f5)] hover:text-blue-300 transition-colors shadow-sm select-none" title="Toggle list of files read in memory and modified">
-            <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
-            <span>Files Touched (<span id="actFilesBadgeCount">0</span>)</span>
-            <span id="actFilesChevron" class="text-[9px] text-zinc-400 transition-transform">▼</span>
-          </button>
+
+          <div class="flex items-center gap-2">
+            <!-- Files Drawer Toggle -->
+            <button id="actToggleFilesBtn" class="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-semibold inner-bg border border-color hover:border-blue-500/40 text-[var(--vscode-editor-foreground,#f4f4f5)] hover:text-blue-300 transition-colors shadow-sm select-none" title="Toggle list of files read in memory and modified">
+              <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              <span>Files Touched (<span id="actFilesBadgeCount">0</span>)</span>
+              <span id="actFilesChevron" class="text-[9px] text-zinc-400 transition-transform">▼</span>
+            </button>
+          </div>
         </div>
 
-        <!-- 4 Activity Metrics Grid -->
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+        <!-- Hero Context Health Diagnostic Bar -->
+        <div class="p-2.5 inner-bg rounded-lg border border-color space-y-2">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-xs font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">Health Diagnostic:</span>
+              <span id="contextHealthPct" class="font-mono font-bold text-emerald-400">0.0%</span>
+              <span class="muted-color">in use of</span>
+              <span id="contextHealthCeiling" class="font-mono font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">256k</span>
+            </div>
+            <div class="text-[11px] font-mono muted-color flex items-center gap-2">
+              <span><strong id="contextHealthUsed" class="text-[var(--vscode-editor-foreground,#f4f4f5)]">0</strong> tok used</span>
+              <span>·</span>
+              <span><strong id="contextHealthFree" class="text-emerald-400">256,000</strong> tok headroom remaining</span>
+            </div>
+          </div>
+
+          <!-- Unified Segmented Context Allocation Bar -->
+          <div id="contextHealthMeter" class="h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-color/80 relative transition-all duration-300" title="Context Allocation">
+            <div id="segPrompts" class="h-full bg-blue-500 transition-all duration-300" style="width: 0%" title="User Prompts"></div>
+            <div id="segReplies" class="h-full bg-purple-500 transition-all duration-300" style="width: 0%" title="Assistant Output"></div>
+            <div id="segFiles" class="h-full bg-cyan-400 transition-all duration-300" style="width: 0%" title="Codebase Files"></div>
+            <div id="segCommands" class="h-full bg-emerald-400 transition-all duration-300" style="width: 0%" title="Tool & Command Outputs"></div>
+            <div id="segImages" class="h-full bg-amber-400 transition-all duration-300" style="width: 0%" title="Analyzed Images"></div>
+            <div id="segFree" class="h-full bg-zinc-800/60 transition-all duration-300" style="width: 100%" title="Free Headroom"></div>
+          </div>
+
+          <!-- Allocation Bar Micro-Legend (3-column responsive grid) -->
+          <div class="grid grid-cols-3 sm:grid-cols-6 gap-x-2 gap-y-1 text-[10px] muted-color pt-0.5">
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>
+              <span class="truncate">Prompts: <strong id="segPromptsVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-purple-500 shrink-0"></span>
+              <span class="truncate">Replies: <strong id="segRepliesVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-cyan-400 shrink-0"></span>
+              <span class="truncate">Files: <strong id="segFilesVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+              <span class="truncate">Cmds: <strong id="segCommandsVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
+              <span class="truncate">Images: <strong id="segImagesVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-zinc-600 shrink-0"></span>
+              <span class="truncate">Headroom: <strong id="segFreeVal" class="text-emerald-400 font-mono">100%</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4 Unified Activity & Footprint Metrics Cards -->
+        <div id="contextCardsGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
           <!-- Metric 1: Assistant Responses -->
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
             <div class="flex items-center justify-between text-[10px] muted-color">
@@ -377,6 +440,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
                 <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
                 Responses
               </span>
+              <span id="actRepliesFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-blue-300">~0 tok</span>
             </div>
             <div id="actAssistantReplies" class="text-base font-bold text-blue-400">0</div>
             <div id="actUserPromptsSub" class="text-[10px] muted-color truncate" title="User prompts and autonomy ratio">0 prompts · 0.0 turns/prompt</div>
@@ -389,6 +453,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
                 <svg class="w-3 h-3 text-cyan-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                 Files In Memory
               </span>
+              <span id="actFilesFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-cyan-300">~0 tok</span>
             </div>
             <div id="actFilesRead" class="text-base font-bold text-cyan-400">0</div>
             <div id="actFilesModifiedSub" class="text-[10px] muted-color truncate" title="Files modified or created">0 modified / created</div>
@@ -398,9 +463,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
             <div class="flex items-center justify-between text-[10px] muted-color">
               <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
-                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                Commands Executed
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2z"/></svg>
+                Commands
               </span>
+              <span id="actCommandsFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-emerald-300">~0 tok</span>
             </div>
             <div id="actCommands" class="text-base font-bold text-emerald-400">0</div>
             <div id="actTotalToolsSub" class="text-[10px] muted-color truncate" title="Total tool actions completed">0 total tool actions</div>
@@ -410,17 +476,27 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
             <div class="flex items-center justify-between text-[10px] muted-color">
               <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
-                <svg class="w-3 h-3 text-purple-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                Analyzed Images
+                <svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                Images
               </span>
+              <span id="actImagesFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-amber-300">~0 tok</span>
             </div>
-            <div id="actImages" class="text-base font-bold text-purple-400">0</div>
-            <div id="actSubagentsWebSub" class="text-[10px] muted-color truncate" title="Subagents and web requests">0 subagents · 0 web calls</div>
+            <div id="actImages" class="text-base font-bold text-amber-400">0</div>
+            <div id="actSubagentsWebSub" class="text-[10px] muted-color truncate" title="Multimodal visual captures processed">0 captures processed</div>
           </div>
         </div>
 
         <!-- Collapsible Files Inspector Drawer -->
         <div id="actFilesDrawer" class="hidden inner-bg border border-color rounded-lg p-3 space-y-2.5">
+          <div class="flex items-center justify-between gap-2 border-b border-color pb-2">
+            <div class="flex items-center gap-1.5 text-xs font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">
+              <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              <span>In-Memory & Modified Codebase Files</span>
+            </div>
+            <input id="actFileFilterInput" type="text" placeholder="Filter paths..." 
+              class="px-2 py-0.5 text-[10px] inner-bg border border-color rounded text-[var(--vscode-editor-foreground,#f4f4f5)] placeholder-[var(--vscode-input-placeholderForeground,#71717a)] focus:outline-none focus:border-blue-500 w-44" />
+          </div>
+
           <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
             <!-- Files Read in Memory -->
             <div class="space-y-1.5">
@@ -431,7 +507,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
                 </span>
                 <span id="actDrawerReadCount" class="px-1.5 py-0.2 rounded text-[10px] inner-bg border border-color text-zinc-300 font-mono">0</span>
               </div>
-              <div id="actDrawerReadList" class="max-h-48 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
+              <div id="actDrawerReadList" class="max-h-56 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
                 <div class="muted-color italic text-[11px]">No files read</div>
               </div>
             </div>
@@ -445,7 +521,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
                 </span>
                 <span id="actDrawerModCount" class="px-1.5 py-0.2 rounded text-[10px] inner-bg border border-color text-zinc-300 font-mono">0</span>
               </div>
-              <div id="actDrawerModList" class="max-h-48 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
+              <div id="actDrawerModList" class="max-h-56 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
                 <div class="muted-color italic text-[11px]">No files modified</div>
               </div>
             </div>
@@ -453,106 +529,86 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         </div>
       </div>
 
-      <!-- SESSION INTELLIGENCE & METRICS GRID (REPLACING OLD COST SECTION) -->
-      <div class="p-3 card-bg border border-color rounded-xl space-y-2.5">
+      <!-- STREAMLINED TURN & CACHE INTELLIGENCE -->
+      <div id="intelligenceCard" class="p-3 card-bg border border-color rounded-xl space-y-2.5">
         <div class="flex items-center justify-between">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Session Intelligence & Turn Metrics</h3>
-          <span class="text-[10px] muted-color">Live execution telemetry</span>
+          <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Turn & Cache Intelligence</h3>
+          <span class="text-[10px] muted-color">Operational telemetry & execution dynamics</span>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
           
-          <!-- Card 1: Last Turn Activity -->
-          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+          <!-- Card 1: Last Turn Execution & Compaction -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1.5">
             <div class="flex items-center justify-between text-[10px] muted-color">
               <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
                 <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                Last Turn
+                Last Turn Execution
               </span>
               <span id="metaLastTurnNum" class="font-semibold text-blue-400">Turn #--</span>
             </div>
-            <div id="metaLastContext" class="text-sm font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</div>
-            <div class="text-[10px] space-y-0.5">
+            <div class="flex items-baseline justify-between gap-2">
+              <div id="metaLastContext" class="text-base font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</div>
+              <div id="metaLastCompaction" class="text-[10px] font-semibold text-emerald-400">Normal</div>
+            </div>
+            <div class="text-[10px] space-y-0.5 border-t border-color/60 pt-1">
               <div class="flex justify-between">
-                <span class="muted-color">Uncached Input:</span>
+                <span class="muted-color">Fresh Uncached Input:</span>
                 <span id="metaLastFresh" class="font-medium text-cyan-400">+0 fresh</span>
               </div>
               <div class="flex justify-between">
                 <span class="muted-color">Model Output:</span>
                 <span id="metaLastOutput" class="font-medium text-purple-400">0 tok</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Trajectory Dynamics & Net Growth -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+                Trajectory Dynamics
+              </span>
+              <span id="metaTrajectoryNetPill" class="text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30">+0 tok net</span>
+            </div>
+            <div class="flex items-baseline justify-between gap-2">
+              <div id="metaPeakContext" class="text-base font-bold text-amber-400">0 tok peak</div>
+              <div class="text-[10px] muted-color font-mono">Min: <span id="metaMinContext" class="text-blue-300">0</span></div>
+            </div>
+            <div class="text-[10px] space-y-0.5 border-t border-color/60 pt-1">
               <div class="flex justify-between">
-                <span class="muted-color">Compaction:</span>
-                <span id="metaLastCompaction" class="font-medium text-emerald-400">Normal</span>
+                <span class="muted-color">Average per Turn:</span>
+                <span id="metaAvgContext" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="muted-color">Compaction Events:</span>
+                <span id="metaCompactions" class="font-medium text-zinc-300">0 events</span>
               </div>
             </div>
           </div>
 
-          <!-- Card 2: Per-Turn Averages -->
-          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
-              <svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-              <span>Per-Turn Averages</span>
+          <!-- Card 3: Prompt Cache Acceleration -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                Cache Acceleration
+              </span>
+              <span id="metaCacheSpeedupPill" class="text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">~1.0x</span>
             </div>
-            <div id="metaAvgContext" class="text-sm font-bold text-amber-400">0 tok</div>
-            <div class="text-[10px] space-y-0.5">
-              <div class="flex justify-between">
-                <span class="muted-color">Avg Output:</span>
-                <span id="metaAvgOutput" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Avg Thinking:</span>
-                <span id="metaAvgThinking" class="font-medium text-purple-400">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Avg Cached:</span>
-                <span id="metaAvgCached" class="font-medium text-emerald-400">0 tok</span>
-              </div>
+            <div class="flex items-baseline justify-between gap-2">
+              <div id="metaCacheCalls" class="text-base font-bold text-emerald-400">0 / 0 Hits</div>
+              <div id="metaCeilingLimit" class="text-[10px] font-mono text-red-400">256k limit</div>
             </div>
-          </div>
-
-          <!-- Card 3: Cache Reliability & Ceiling -->
-          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
-              <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-              <span>Cache Performance</span>
-            </div>
-            <div id="metaCacheCalls" class="text-sm font-bold text-blue-400">0 Hits</div>
-            <div class="text-[10px] space-y-0.5">
+            <div class="text-[10px] space-y-0.5 border-t border-color/60 pt-1">
               <div class="flex justify-between">
                 <span class="muted-color">Cold Starts:</span>
                 <span id="metaCacheMisses" class="font-medium text-amber-400">0 misses</span>
               </div>
               <div class="flex justify-between">
-                <span class="muted-color">Compactions:</span>
-                <span id="metaCompactions" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 events</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Ceiling Limit:</span>
-                <span id="metaCeilingLimit" class="font-medium text-red-400 font-mono">256k limit</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Card 4: Session Peaks -->
-          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
-              <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
-              <span>Session Peaks</span>
-            </div>
-            <div id="metaPeakContext" class="text-sm font-bold text-emerald-400">0 tok</div>
-            <div class="text-[10px] space-y-0.5">
-              <div class="flex justify-between">
-                <span class="muted-color">Peak Output:</span>
-                <span id="metaPeakOutput" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Peak Thinking:</span>
-                <span id="metaPeakThinking" class="font-medium text-purple-400">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Min Context:</span>
-                <span id="metaMinContext" class="font-medium text-blue-300">0 tok</span>
+                <span class="muted-color">Volume Served:</span>
+                <span id="metaAvgCached" class="font-medium text-emerald-400">0 tok avg</span>
               </div>
             </div>
           </div>
@@ -638,6 +694,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     let isLoadingTimeline = false;
     let isRefreshing = false;
     let refreshTimeout = null;
+    let fileFilterQuery = '';
 
     window.addEventListener('message', event => {
       const msg = event.data;
@@ -1582,6 +1639,108 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       collapsedSubagents.delete(idToDelete);
     }
 
+    function getFileExtension(path) {
+      if (!path) return '';
+      const base = path.split(/[\\/]/).pop() || '';
+      const parts = base.split('.');
+      if (parts.length > 1) {
+        return parts.pop().toLowerCase();
+      }
+      return '';
+    }
+
+    function getFileBadgeClass(ext) {
+      switch (ext) {
+        case 'js':
+        case 'mjs':
+        case 'cjs':
+          return 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30';
+        case 'ts':
+        case 'tsx':
+        case 'jsx':
+          return 'bg-blue-500/15 text-blue-300 border-blue-500/30';
+        case 'py':
+          return 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30';
+        case 'json':
+          return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+        case 'md':
+        case 'txt':
+          return 'bg-zinc-500/15 text-zinc-300 border-zinc-500/30';
+        case 'html':
+        case 'css':
+        case 'scss':
+          return 'bg-pink-500/15 text-pink-300 border-pink-500/30';
+        case 'sql':
+        case 'db':
+          return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+        default:
+          return 'bg-purple-500/15 text-purple-300 border-purple-500/30';
+      }
+    }
+
+    function createFileItemHtml(filePath, isModified = false) {
+      const base = escapeHtml(filePath.split(/[\\/]/).pop() || filePath);
+      const ext = getFileExtension(filePath);
+      const badgeCls = getFileBadgeClass(ext);
+      const extBadge = ext ? ('<span class="text-[9px] px-1 py-0.2 rounded font-mono font-semibold uppercase border shrink-0 ' + badgeCls + '">' + escapeHtml(ext) + '</span>') : '';
+      const nameCls = isModified ? 'text-emerald-300 font-semibold' : 'text-zinc-200';
+      const borderHover = isModified ? 'hover:border-emerald-500/40' : 'hover:border-cyan-500/40';
+
+      return '<div class="truncate p-1.5 inner-bg rounded-md border border-color ' + borderHover + ' flex items-center justify-between gap-1.5 transition-colors" title="' + escapeHtml(filePath) + '">' +
+        '<div class="flex items-center gap-1.5 min-w-0 flex-1 truncate">' +
+          extBadge +
+          '<span class="truncate ' + nameCls + '">' + base + '</span>' +
+        '</div>' +
+        '<span class="text-[9px] muted-color font-sans shrink-0 truncate max-w-[45%] text-right">' + escapeHtml(filePath) + '</span>' +
+      '</div>';
+    }
+
+    function renderDrawerFiles(query = '') {
+      const conv = CONVERSATIONS.find(c => c.id === selectedId) || CONVERSATIONS[0];
+      const act = (conv && conv.stats && conv.stats.activity) || {};
+      const q = (query || '').toLowerCase().trim();
+
+      const readListEl = document.getElementById('actDrawerReadList');
+      const readCountEl = document.getElementById('actDrawerReadCount');
+      const allRead = Array.isArray(act.filesRead) ? act.filesRead : [];
+      const filteredRead = q ? allRead.filter(f => f.toLowerCase().includes(q)) : allRead;
+
+      if (readCountEl) {
+        readCountEl.textContent = q ? (filteredRead.length + ' / ' + (act.filesReadCount || allRead.length)) : (act.filesReadCount || allRead.length);
+      }
+      if (readListEl) {
+        if (filteredRead.length > 0) {
+          readListEl.innerHTML = filteredRead.map(f => createFileItemHtml(f, false)).join('');
+        } else if (allRead.length > 0 && q) {
+          readListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No matching files for "' + escapeHtml(q) + '"</div>';
+        } else if (act.filesReadCount > 0) {
+          readListEl.innerHTML = '<div class="text-cyan-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesReadCount + ' files in memory...</span></div>';
+        } else {
+          readListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No files read in memory</div>';
+        }
+      }
+
+      const modListEl = document.getElementById('actDrawerModList');
+      const modCountEl = document.getElementById('actDrawerModCount');
+      const allMod = Array.isArray(act.filesModified) ? act.filesModified : [];
+      const filteredMod = q ? allMod.filter(f => f.toLowerCase().includes(q)) : allMod;
+
+      if (modCountEl) {
+        modCountEl.textContent = q ? (filteredMod.length + ' / ' + (act.filesModifiedCount || allMod.length)) : (act.filesModifiedCount || allMod.length);
+      }
+      if (modListEl) {
+        if (filteredMod.length > 0) {
+          modListEl.innerHTML = filteredMod.map(f => createFileItemHtml(f, true)).join('');
+        } else if (allMod.length > 0 && q) {
+          modListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No matching files for "' + escapeHtml(q) + '"</div>';
+        } else if (act.filesModifiedCount > 0) {
+          modListEl.innerHTML = '<div class="text-emerald-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesModifiedCount + ' modified files...</span></div>';
+        } else {
+          modListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No files modified or created</div>';
+        }
+      }
+    }
+
     function renderDetail() {
       const conv = CONVERSATIONS.find(c => c.id === selectedId) || CONVERSATIONS[0];
       if (!conv || !conv.stats) return;
@@ -1893,7 +2052,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       document.getElementById('legOutput').textContent = (s.totalOutput || 0).toLocaleString() + ' tok';
       document.getElementById('legOutputPct').textContent = pctOut + '%';
 
-      // Session Operations & Activity (Issue #3 /context metrics)
+      // Session Operations & Context Health (Issue #3 /context metrics)
       const act = s.activity || {
         userPrompts: 0,
         assistantResponses: s.calls || 0,
@@ -1912,107 +2071,274 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       const prompts = act.userPrompts || 0;
       const autonomy = prompts > 0 ? (replies / prompts).toFixed(1) : (replies > 0 ? replies.toFixed(1) : '1.0');
 
-      document.getElementById('actAssistantReplies').textContent = replies.toLocaleString();
-      document.getElementById('actUserPromptsSub').textContent = prompts + ' prompt' + (prompts === 1 ? '' : 's') + ' · ' + autonomy + ' turns/prompt';
-      document.getElementById('actUserPromptsSub').title = prompts + ' user prompts · ' + autonomy + ' agent turns per prompt (autonomy ratio)';
+      const repliesEl = document.getElementById('actAssistantReplies');
+      if (repliesEl) repliesEl.textContent = replies.toLocaleString();
+      const promptsSubEl = document.getElementById('actUserPromptsSub');
+      if (promptsSubEl) {
+        promptsSubEl.textContent = prompts + ' prompt' + (prompts === 1 ? '' : 's') + ' · ' + autonomy + ' turns/prompt';
+        promptsSubEl.title = prompts + ' user prompts · ' + autonomy + ' agent turns per prompt (autonomy ratio)';
+      }
 
-      document.getElementById('actFilesRead').textContent = (act.filesReadCount || 0).toLocaleString();
-      document.getElementById('actFilesModifiedSub').textContent = (act.filesModifiedCount || 0) + ' modified / created';
+      const filesReadEl = document.getElementById('actFilesRead');
+      if (filesReadEl) filesReadEl.textContent = (act.filesReadCount || 0).toLocaleString();
+      const filesModSubEl = document.getElementById('actFilesModifiedSub');
+      if (filesModSubEl) filesModSubEl.textContent = (act.filesModifiedCount || 0) + ' modified / created';
 
-      document.getElementById('actCommands').textContent = (act.executedCommands || 0).toLocaleString();
-      document.getElementById('actTotalToolsSub').textContent = (act.totalToolCalls || 0).toLocaleString() + ' total tool actions';
+      const commandsEl = document.getElementById('actCommands');
+      if (commandsEl) commandsEl.textContent = (act.executedCommands || 0).toLocaleString();
+      const toolsSubEl = document.getElementById('actTotalToolsSub');
+      if (toolsSubEl) toolsSubEl.textContent = (act.totalToolCalls || 0).toLocaleString() + ' total tool actions';
 
-      document.getElementById('actImages').textContent = (act.analyzedImages || 0).toLocaleString();
-      document.getElementById('actSubagentsWebSub').textContent = (act.subagentsInvoked || 0) + ' subagents · ' + (act.webRequests || 0) + ' web calls';
+      const imagesCount = act.analyzedImages || 0;
+      const imagesEl = document.getElementById('actImages');
+      if (imagesEl) imagesEl.textContent = imagesCount.toLocaleString();
+      const subsWebSubEl = document.getElementById('actSubagentsWebSub');
+      if (subsWebSubEl) {
+        subsWebSubEl.textContent = imagesCount === 1 ? '1 capture processed' : imagesCount + ' captures processed';
+        subsWebSubEl.title = imagesCount + ' multimodal image captures processed' + (act.subagentsInvoked > 0 || act.webRequests > 0 ? ' (' + act.subagentsInvoked + ' subagents, ' + act.webRequests + ' web calls)' : '');
+      }
 
       const badgeCountEl = document.getElementById('actFilesBadgeCount');
       if (badgeCountEl) badgeCountEl.textContent = (act.filesReadCount || 0) + ' read · ' + (act.filesModifiedCount || 0) + ' mod';
 
-      // Populate file lists in drawer
-      const readListEl = document.getElementById('actDrawerReadList');
-      const readCountEl = document.getElementById('actDrawerReadCount');
-      if (readCountEl) readCountEl.textContent = (act.filesReadCount || 0);
-      if (readListEl) {
-        if (Array.isArray(act.filesRead) && act.filesRead.length > 0) {
-          readListEl.innerHTML = act.filesRead.map(f => {
-            const base = escapeHtml(f.split(/[\\/]/).pop() || f);
-            return '<div class="truncate p-1 inner-bg rounded border border-color hover:border-cyan-500/30 flex items-center justify-between gap-1" title="' + escapeHtml(f) + '">' +
-              '<span class="truncate">' + base + '</span>' +
-              '<span class="text-[9px] muted-color font-sans shrink-0 truncate max-w-[50%]">' + escapeHtml(f) + '</span>' +
-            '</div>';
-          }).join('');
-        } else if (act.filesReadCount > 0) {
-          readListEl.innerHTML = '<div class="text-cyan-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesReadCount + ' files in memory...</span></div>';
-        } else {
-          readListEl.innerHTML = '<div class="muted-color italic text-[11px] p-1">No files read in memory</div>';
+      // Context Health & Allocation Calculations
+      const usedTokens = lastContext || 0;
+      const ceilingTokens = contextLimit || 256000;
+      const freeTokens = Math.max(0, ceilingTokens - usedTokens);
+      const usedPct = ceilingTokens > 0 ? ((usedTokens / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const freePct = ceilingTokens > 0 ? ((freeTokens / ceilingTokens) * 100).toFixed(1) : '100.0';
+
+      const healthPctEl = document.getElementById('contextHealthPct');
+      if (healthPctEl) healthPctEl.textContent = usedPct + '%';
+
+      const healthCeilEl = document.getElementById('contextHealthCeiling');
+      if (healthCeilEl) healthCeilEl.textContent = formatTok(ceilingTokens) + ' limit';
+
+      const healthUsedEl = document.getElementById('contextHealthUsed');
+      if (healthUsedEl) healthUsedEl.textContent = usedTokens.toLocaleString();
+
+      const healthFreeEl = document.getElementById('contextHealthFree');
+      if (healthFreeEl) healthFreeEl.textContent = freeTokens.toLocaleString();
+
+      const healthMeterEl = document.getElementById('contextHealthMeter');
+      const healthBadgeEl = document.getElementById('contextHealthStatusBadge');
+
+      const usedNum = parseFloat(usedPct) || 0;
+      if (usedNum >= 85) {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Compaction Alert';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-rose-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-rose-500/70 shadow-[0_0_8px_rgba(244,63,94,0.3)] relative transition-all duration-300';
+          healthMeterEl.title = 'Context Allocation: ' + usedPct + '% used (Compaction Alert)';
+        }
+      } else if (usedNum >= 60) {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Moderate Load';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-amber-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-amber-500/60 relative transition-all duration-300';
+          healthMeterEl.title = 'Context Allocation: ' + usedPct + '% used (Moderate Load)';
+        }
+      } else {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Optimal';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-emerald-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-color/80 relative transition-all duration-300';
+          healthMeterEl.title = 'Context Allocation: ' + usedPct + '% used (Optimal)';
         }
       }
 
-      const modListEl = document.getElementById('actDrawerModList');
-      const modCountEl = document.getElementById('actDrawerModCount');
-      if (modCountEl) modCountEl.textContent = (act.filesModifiedCount || 0);
-      if (modListEl) {
-        if (Array.isArray(act.filesModified) && act.filesModified.length > 0) {
-          modListEl.innerHTML = act.filesModified.map(f => {
-            const base = escapeHtml(f.split(/[\\/]/).pop() || f);
-            return '<div class="truncate p-1 inner-bg rounded border border-color hover:border-emerald-500/30 flex items-center justify-between gap-1" title="' + escapeHtml(f) + '">' +
-              '<span class="truncate text-emerald-300 font-semibold">' + base + '</span>' +
-              '<span class="text-[9px] muted-color font-sans shrink-0 truncate max-w-[50%]">' + escapeHtml(f) + '</span>' +
-            '</div>';
-          }).join('');
-        } else if (act.filesModifiedCount > 0) {
-          modListEl.innerHTML = '<div class="text-emerald-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesModifiedCount + ' modified files...</span></div>';
+      // Proportional Token Component Footprints
+      let imgTok = (act.analyzedImages || 0) * 1600;
+      let cmdTok = (act.executedCommands || 0) * 250;
+      let repliesTok = (s.lastTurn ? s.lastTurn.output : s.avgOutput) || (act.assistantResponses * 300) || 0;
+      let promptsTok = (act.userPrompts || 0) * 200;
+      let filesTok = 0;
+
+      if (usedTokens > 0) {
+        if (act.filesReadCount > 0) {
+          const rawNonFiles = imgTok + cmdTok + repliesTok + promptsTok;
+          if (rawNonFiles < usedTokens) {
+            filesTok = usedTokens - rawNonFiles;
+          } else {
+            filesTok = Math.round(usedTokens * 0.45);
+            const remaining = usedTokens - filesTok;
+            const factor = rawNonFiles > 0 ? (remaining / rawNonFiles) : 0;
+            imgTok = Math.round(imgTok * factor);
+            cmdTok = Math.round(cmdTok * factor);
+            repliesTok = Math.round(repliesTok * factor);
+            promptsTok = Math.max(0, usedTokens - filesTok - imgTok - cmdTok - repliesTok);
+          }
         } else {
-          modListEl.innerHTML = '<div class="muted-color italic text-[11px] p-1">No files modified or created</div>';
+          filesTok = 0;
+          const rawNonFiles = imgTok + cmdTok + repliesTok + promptsTok;
+          if (rawNonFiles > 0 && rawNonFiles !== usedTokens) {
+            const factor = usedTokens / rawNonFiles;
+            imgTok = Math.round(imgTok * factor);
+            cmdTok = Math.round(cmdTok * factor);
+            repliesTok = Math.round(repliesTok * factor);
+            promptsTok = Math.max(0, usedTokens - imgTok - cmdTok - repliesTok);
+          }
         }
+      } else {
+        imgTok = 0;
+        cmdTok = 0;
+        repliesTok = 0;
+        promptsTok = 0;
+        filesTok = 0;
       }
 
+      const promptsCeilPct = ceilingTokens > 0 ? ((promptsTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const repliesCeilPct = ceilingTokens > 0 ? ((repliesTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const filesCeilPct = ceilingTokens > 0 ? ((filesTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const cmdCeilPct = ceilingTokens > 0 ? ((cmdTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const imgCeilPct = ceilingTokens > 0 ? ((imgTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+
+      const promptsCtxPct = usedTokens > 0 ? ((promptsTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const repliesCtxPct = usedTokens > 0 ? ((repliesTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const filesCtxPct = usedTokens > 0 ? ((filesTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const cmdCtxPct = usedTokens > 0 ? ((cmdTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const imgCtxPct = usedTokens > 0 ? ((imgTok / usedTokens) * 100).toFixed(1) : '0.0';
+
+      // Segmented Allocation Bar
+      const segPrompts = document.getElementById('segPrompts');
+      if (segPrompts) {
+        segPrompts.style.width = promptsCeilPct + '%';
+        segPrompts.title = 'User Prompts: ~' + promptsTok.toLocaleString() + ' tok (' + promptsCeilPct + '% of ceiling)';
+      }
+      const segReplies = document.getElementById('segReplies');
+      if (segReplies) {
+        segReplies.style.width = repliesCeilPct + '%';
+        segReplies.title = 'Assistant Responses: ~' + repliesTok.toLocaleString() + ' tok (' + repliesCeilPct + '% of ceiling)';
+      }
+      const segFiles = document.getElementById('segFiles');
+      if (segFiles) {
+        segFiles.style.width = filesCeilPct + '%';
+        segFiles.title = 'Codebase Files: ~' + filesTok.toLocaleString() + ' tok (' + filesCeilPct + '% of ceiling)';
+      }
+      const segCommands = document.getElementById('segCommands');
+      if (segCommands) {
+        segCommands.style.width = cmdCeilPct + '%';
+        segCommands.title = 'Executed Commands: ~' + cmdTok.toLocaleString() + ' tok (' + cmdCeilPct + '% of ceiling)';
+      }
+      const segImages = document.getElementById('segImages');
+      if (segImages) {
+        segImages.style.width = imgCeilPct + '%';
+        segImages.title = 'Analyzed Images: ~' + imgTok.toLocaleString() + ' tok (' + imgCeilPct + '% of ceiling)';
+      }
+      const segFree = document.getElementById('segFree');
+      if (segFree) {
+        segFree.style.width = freePct + '%';
+        segFree.title = 'Available Headroom: ' + freeTokens.toLocaleString() + ' tok (' + freePct + '% free)';
+      }
+
+      // Micro-Legend Labels
+      const segPromptsVal = document.getElementById('segPromptsVal');
+      if (segPromptsVal) segPromptsVal.textContent = promptsCtxPct + '%';
+      const segRepliesVal = document.getElementById('segRepliesVal');
+      if (segRepliesVal) segRepliesVal.textContent = repliesCtxPct + '%';
+      const segFilesVal = document.getElementById('segFilesVal');
+      if (segFilesVal) segFilesVal.textContent = filesCtxPct + '%';
+      const segCommandsVal = document.getElementById('segCommandsVal');
+      if (segCommandsVal) segCommandsVal.textContent = cmdCtxPct + '%';
+      const segImagesVal = document.getElementById('segImagesVal');
+      if (segImagesVal) segImagesVal.textContent = imgCtxPct + '%';
+      const segFreeVal = document.getElementById('segFreeVal');
+      if (segFreeVal) segFreeVal.textContent = freePct + '%';
+
+      // Card Footprint Pills
+      const actRepliesFootprint = document.getElementById('actRepliesFootprint');
+      if (actRepliesFootprint) actRepliesFootprint.textContent = '~' + formatTok(repliesTok) + ' tok (' + repliesCtxPct + '%)';
+      const actFilesFootprint = document.getElementById('actFilesFootprint');
+      if (actFilesFootprint) actFilesFootprint.textContent = '~' + formatTok(filesTok) + ' tok (' + filesCtxPct + '%)';
+      const actCommandsFootprint = document.getElementById('actCommandsFootprint');
+      if (actCommandsFootprint) actCommandsFootprint.textContent = '~' + formatTok(cmdTok) + ' tok (' + cmdCtxPct + '%)';
+      const actImagesFootprint = document.getElementById('actImagesFootprint');
+      if (actImagesFootprint) actImagesFootprint.textContent = '~' + formatTok(imgTok) + ' tok (' + imgCtxPct + '%)';
+
+      // Populate file lists in drawer with search filter & badges
+      renderDrawerFiles(fileFilterQuery);
       updateActivityFilesState();
 
-      // Session Intelligence & Turn Metrics
+      // Streamlined Turn & Cache Intelligence
       // Card 1: Last Turn Activity
       const lt = s.lastTurn;
       if (lt) {
-        document.getElementById('metaLastTurnNum').textContent = 'Turn #' + lt.turn;
-        document.getElementById('metaLastContext').textContent = formatTok(lt.context != null ? lt.context : lt.totalInput) + ' tok';
-        document.getElementById('metaLastFresh').textContent = '+' + formatTok(lt.fresh) + ' fresh';
-        document.getElementById('metaLastOutput').textContent = lt.output.toLocaleString() + ' tok (' + lt.thinking.toLocaleString() + ' thk)';
-        if (lt.isCompacted) {
-          document.getElementById('metaLastCompaction').innerHTML = '<span class="text-red-400 font-bold">Compacted (-' + formatTok(lt.compactedAmount) + ')</span>';
-        } else {
-          document.getElementById('metaLastCompaction').innerHTML = '<span class="text-emerald-400 font-medium">Normal</span>';
+        const ltNumEl = document.getElementById('metaLastTurnNum');
+        if (ltNumEl) ltNumEl.textContent = 'Turn #' + lt.turn;
+        const ltCtxEl = document.getElementById('metaLastContext');
+        if (ltCtxEl) ltCtxEl.textContent = formatTok(lt.context != null ? lt.context : lt.totalInput) + ' tok';
+        const ltFreshEl = document.getElementById('metaLastFresh');
+        if (ltFreshEl) ltFreshEl.textContent = '+' + formatTok(lt.fresh) + ' fresh';
+        const ltOutEl = document.getElementById('metaLastOutput');
+        if (ltOutEl) ltOutEl.textContent = lt.output.toLocaleString() + ' tok (' + lt.thinking.toLocaleString() + ' thk)';
+        const ltCompEl = document.getElementById('metaLastCompaction');
+        if (ltCompEl) {
+          if (lt.isCompacted) {
+            ltCompEl.innerHTML = '<span class="text-red-400 font-bold">Compacted (-' + formatTok(lt.compactedAmount) + ')</span>';
+          } else {
+            ltCompEl.innerHTML = '<span class="text-emerald-400 font-medium">Normal</span>';
+          }
         }
       } else {
-        document.getElementById('metaLastTurnNum').textContent = 'Turn #--';
-        document.getElementById('metaLastContext').textContent = '0 tok';
-        document.getElementById('metaLastFresh').textContent = '+0 fresh';
-        document.getElementById('metaLastOutput').textContent = '0 tok';
-        document.getElementById('metaLastCompaction').textContent = 'Normal';
+        const ltNumEl = document.getElementById('metaLastTurnNum');
+        if (ltNumEl) ltNumEl.textContent = 'Turn #--';
+        const ltCtxEl = document.getElementById('metaLastContext');
+        if (ltCtxEl) ltCtxEl.textContent = '0 tok';
+        const ltFreshEl = document.getElementById('metaLastFresh');
+        if (ltFreshEl) ltFreshEl.textContent = '+0 fresh';
+        const ltOutEl = document.getElementById('metaLastOutput');
+        if (ltOutEl) ltOutEl.textContent = '0 tok';
+        const ltCompEl = document.getElementById('metaLastCompaction');
+        if (ltCompEl) ltCompEl.textContent = 'Normal';
       }
 
-      // Card 2: Per-Turn Averages
-      document.getElementById('metaAvgContext').textContent = formatTok(s.avgContext) + ' tok';
-      document.getElementById('metaAvgOutput').textContent = (s.avgOutput || 0).toLocaleString() + ' tok / call';
-      const thinkRatio = s.avgOutput > 0 ? Math.round(((s.avgThinking || 0) / s.avgOutput) * 100) : 0;
-      document.getElementById('metaAvgThinking').textContent = (s.avgThinking || 0).toLocaleString() + ' tok (' + thinkRatio + '%)';
-      document.getElementById('metaAvgCached').textContent = formatTok(s.avgCached) + ' tok';
+      // Card 2: Trajectory Dynamics & Net Growth
+      const netGrowth = usedTokens - (s.minContext || 0);
+      const netPill = document.getElementById('metaTrajectoryNetPill');
+      if (netPill) {
+        const sign = netGrowth >= 0 ? '+' : '';
+        netPill.textContent = sign + formatTok(netGrowth) + ' tok net';
+        netPill.className = netGrowth >= 0
+          ? 'text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30'
+          : 'text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+      }
+      const peakPct = Math.min(100, Math.round(((s.peakContext || 0) / ceilingTokens) * 100));
+      const peakCtxEl = document.getElementById('metaPeakContext');
+      if (peakCtxEl) peakCtxEl.textContent = formatTok(s.peakContext) + ' (' + peakPct + '%)';
+      const minCtxEl = document.getElementById('metaMinContext');
+      if (minCtxEl) minCtxEl.textContent = formatTok(s.minContext) + ' tok';
+      const avgCtxEl = document.getElementById('metaAvgContext');
+      if (avgCtxEl) avgCtxEl.textContent = formatTok(s.avgContext) + ' tok';
+      const compEventsEl = document.getElementById('metaCompactions');
+      if (compEventsEl) compEventsEl.textContent = (s.compactionsCount || 0) + ' events';
 
-      // Card 3: Cache Reliability & Compactions
-      document.getElementById('metaCacheCalls').textContent = s.cacheHits + ' / ' + s.calls + ' Hits';
-      document.getElementById('metaCacheMisses').textContent = s.cacheMisses + ' misses';
-      document.getElementById('metaCompactions').textContent = (s.compactionsCount || 0) + ' events';
-      const limitLabel = formatTok(contextLimit);
+      // Card 3: Cache Acceleration
+      const hitRateNum = parseFloat(s.cacheHitRate) || 0;
+      const speedup = hitRateNum > 0 ? (1 / Math.max(0.05, (1 - (hitRateNum / 100) * 0.85))).toFixed(1) : '1.0';
+      const speedupPill = document.getElementById('metaCacheSpeedupPill');
+      if (speedupPill) speedupPill.textContent = '~' + speedup + 'x faster';
+
+      const cacheCallsEl = document.getElementById('metaCacheCalls');
+      if (cacheCallsEl) cacheCallsEl.textContent = s.cacheHits + ' / ' + s.calls + ' Hits (' + s.cacheHitRate + '%)';
+      const cacheMissesEl = document.getElementById('metaCacheMisses');
+      if (cacheMissesEl) cacheMissesEl.textContent = s.cacheMisses + ' misses';
+      const avgCachedEl = document.getElementById('metaAvgCached');
+      if (avgCachedEl) avgCachedEl.textContent = formatTok(s.avgCached) + ' tok avg';
+
+      const limitLabel = formatTok(ceilingTokens);
       const ceilEl = document.getElementById('metaCeilingLimit');
       if (ceilEl) ceilEl.textContent = limitLabel + ' limit';
       const chartCeilLeg = document.getElementById('chartCeilingLegend');
       if (chartCeilLeg) chartCeilLeg.textContent = limitLabel + ' Limit';
-
-      // Card 4: Session Peaks
-      const peakPct = Math.min(100, Math.round(((s.peakContext || 0) / contextLimit) * 100));
-      document.getElementById('metaPeakContext').textContent = formatTok(s.peakContext) + ' (' + peakPct + '%)';
-      document.getElementById('metaPeakOutput').textContent = (s.peakOutput || 0).toLocaleString() + ' tok';
-      document.getElementById('metaPeakThinking').textContent = (s.peakThinking || 0).toLocaleString() + ' tok';
-      document.getElementById('metaMinContext').textContent = formatTok(s.minContext) + ' tok';
 
       currentTimeline = s.contextTimeline || [];
       renderChart(currentTimeline);
@@ -2392,6 +2718,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           filterList();
           updateGlobalHeaders();
           renderDetail();
+        };
+      }
+      const fileFilterInput = document.getElementById('actFileFilterInput');
+      if (fileFilterInput) {
+        fileFilterInput.oninput = (e) => {
+          fileFilterQuery = (e.target.value || '').toLowerCase().trim();
+          renderDrawerFiles(fileFilterQuery);
         };
       }
       const search = document.getElementById('searchInput');

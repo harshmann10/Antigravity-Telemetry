@@ -97,7 +97,6 @@ Every row here has caused a real bug in production — keep these rules in mind:
 │   ├── self-check.js        # 250+ dependency-free unit & integration tests (ALWAYS run after edits)
 │   └── extract-changelog.js # Extracts release notes from CHANGELOG.md for GitHub Releases
 ├── REFERENCE.md          # Technical specifications: protobuf wire schemas, SQLite tables, step types
-├── CLI.md                # Antigravity CLI integration architecture and status
 ├── UI UX.md              # UI/UX design specifications, collapse states, and visual badges
 ├── CHANGELOG.md          # User-facing release notes
 └── DEV_CHANGELOG.md      # Engineering log by review phase
@@ -109,8 +108,7 @@ Every row here has caused a real bug in production — keep these rules in mind:
 
 Before editing specific components, consult their dedicated documentation:
 - **Modifying Protobuf Decoding, SQLite Queries, or Step Types**: Read [`REFERENCE.md`](./REFERENCE.md) (§3, §4, §5).
-- **Modifying Multi-Root Scanning or Deletion Engine**: Read [`REFERENCE.md`](./REFERENCE.md) (§1, §2).
-- **Working on CLI Support or Auto-Detection**: Read [`CLI.md`](./CLI.md).
+- **Modifying Multi-Root Scanning, CLI Support, or Deletion Engine**: Read [`REFERENCE.md`](./REFERENCE.md) (§1, §2).
 - **Working on Dashboard Layout, Badges, or Collapse Controls**: Read [`UI UX.md`](./UI UX.md).
 - **Reviewing Architectural History**: Read [`DEV_CHANGELOG.md`](./DEV_CHANGELOG.md).
 

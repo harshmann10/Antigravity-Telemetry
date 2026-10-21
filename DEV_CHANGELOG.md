@@ -3,6 +3,46 @@
 Technical and architectural notes for Antigravity Telemetry, grouped by development and review phases.
 For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 
+## 2026-10-20 — Phase 8: Context Health & Intelligence Hub (CLI `/context` Issue #3)
+
+**Task 1 — Hero Context Health Diagnostic Bar & Live Capacity Meter**
+- Elevated the webview dashboard beyond static terminal replication by introducing a live health diagnostic hero container:
+  - Displays dynamic capacity fill percentage against ceiling limit (`Health Diagnostic: X% in use of [Limit]`).
+  - Live headroom calculation showing exact remaining tokens before compaction (`X tok used · Y tok headroom remaining`).
+  - Dynamic tri-state color status pill and progress bar gradient:
+    - 🟢 Optimal (`< 60%`): Emerald gradient (`from-emerald-500 to-teal-400`) and "Optimal" badge.
+    - 🟡 Moderate Load (`60% - 85%`): Amber gradient (`from-amber-500 to-yellow-400`) and "Moderate Load" badge.
+    - 🔴 Compaction Alert (`> 85%`): Rose gradient (`from-rose-500 to-red-400`) and "Compaction Alert" badge.
+
+**Task 2 — Interactive Segmented Context Allocation Bar**
+- Added a multi-part segmented meter visually distributing the context window across operational components:
+  - User Prompts (Blue), Assistant Responses (Purple), In-Memory Files (Cyan), Executed Commands (Emerald), Analyzed Images (Amber), and Free Headroom (Muted).
+  - Includes hover tooltips detailing exact token counts and ceiling shares, plus a micro-legend row with per-component context shares.
+
+**Task 3 — Unified High-Density Activity & Capacity Cards (UX Simplification)**
+- Eliminated terminal image-bias redundancy by removing the static 8-row table and view-switcher toggle in favor of a single unified dashboard layout:
+  - Reclaimed >240px of vertical viewport while preserving all telemetry metrics.
+  - Enhanced 4 core metric cards with proportional token footprint pills (`~X tok (Y%)`) and autonomy ratios.
+  - Streamlined "Files in Memory" card by relying on the top "Files Touched" drawer button, eliminating redundant nested inspect controls.
+  - Merged stacked progress bars into a single unified segmented allocation bar with reactive health border styling (optimal, moderate, compaction alert).
+  - Upgraded micro-legend to a responsive 3-column / 6-column grid (`grid-cols-3 sm:grid-cols-6`) preventing irregular wrapping on narrow panels.
+  - Aligned Images card color palette to amber and refined sub-label to direct image capture count (`X captures processed`).
+
+**Task 4 — Codebase Files Drawer Enhancements**
+- Added an instant path & extension filter input (`#actFileFilterInput`) allowing instant live searching across in-memory and modified files.
+- Added color-coded file extension badges (`.js`, `.ts`, `.py`, `.json`, `.md`, `.css`, `.sql`, etc.) for fast visual scanning.
+- Retained remote SSH bandwidth decimation and webview cache preservation (`oldActivities`).
+
+**Task 5 — Streamlined Turn & Cache Intelligence**
+- Refactored Section 4 (`#intelligenceCard`) from 4 redundant KPI tiles into 3 dense, high-signal operational modules:
+  1. *Last Turn Execution*: Turn #, context size, fresh uncached input delta, model output volume, and compaction badge.
+  2. *Trajectory Dynamics*: Min $\rightarrow$ Current $\rightarrow$ Peak context, net expansion pill (`+X tok net`), and compaction count.
+  3. *Cache Acceleration*: Cache hit rate %, calls ratio, volume served from cache, cold start count, and estimated speedup multiplier (`~5.2x faster`).
+
+**Task 6 — Comprehensive Verification Suite Expansion (281 tests)**
+- Expanded Section 14 in `scripts/self-check.js` to test all new DOM elements, allocation bar segments, dual-view mode switcher toggling, diagnostic table population, and drawer filtering.
+- All 281 unit & integration tests pass with 0 failures.
+
 ## 2026-10-18 — Phase 7: Session Operations & Activity Telemetry (Issue #3)
 
 **Task 1 — Core Metrics & Fast SQLite Activity Extraction**

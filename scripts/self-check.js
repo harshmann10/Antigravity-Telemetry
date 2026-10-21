@@ -1235,8 +1235,8 @@ function testChangelogExtraction() {
 
     // Default extraction (latest section from user-facing CHANGELOG.md)
     const latest = extractChangelog();
-    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.1.1'), latest.title);
-    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Remote SSH') && latest.notes.includes('Bandwidth'), latest.notes.slice(0, 100));
+    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.2.0'), latest.title);
+    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Context Health') && latest.notes.includes('Codebase Activity'), latest.notes.slice(0, 100));
     check('strips trailing horizontal rules', !latest.notes.endsWith('---'));
 
     // Specific tag extraction (e.g. v1.1.0)
@@ -1593,6 +1593,52 @@ function testSessionOperationsAndActivity() {
     vm.runInContext(`renderChart(${JSON.stringify(mockPoint)}, true);`, ctx);
     check('chartLoadingOverlay hidden after timeline loads', overlayEl && overlayEl.classList.classes.has('hidden'));
     check('chartPointsCount displays point count', pointsCountEl && pointsCountEl.textContent.includes('1 point'));
+
+    // Context Health & Allocation tests
+    check('dashboard html contains contextHealthPct', html.includes('id="contextHealthPct"'));
+    check('dashboard html contains contextHealthMeter', html.includes('id="contextHealthMeter"'));
+    check('dashboard html contains segPrompts', html.includes('id="segPrompts"'));
+    check('dashboard html contains segReplies', html.includes('id="segReplies"'));
+    check('dashboard html contains segFiles', html.includes('id="segFiles"'));
+    check('dashboard html contains segCommands', html.includes('id="segCommands"'));
+    check('dashboard html contains segImages', html.includes('id="segImages"'));
+    check('dashboard html contains segFree', html.includes('id="segFree"'));
+
+    const healthPctEl = doc.getElementById('contextHealthPct');
+    check('contextHealthPct populated in DOM', healthPctEl && healthPctEl.textContent.includes('%'));
+    const healthUsedEl = doc.getElementById('contextHealthUsed');
+    check('contextHealthUsed populated in DOM', Boolean(healthUsedEl && healthUsedEl.textContent));
+    const healthFreeEl = doc.getElementById('contextHealthFree');
+    check('contextHealthFree populated in DOM', Boolean(healthFreeEl && healthFreeEl.textContent));
+
+    // Unified Metric Cards & Inline Drawer Inspector tests
+    check('dashboard html contains contextCardsGrid', html.includes('id="contextCardsGrid"'));
+    check('dashboard html contains actRepliesFootprint', html.includes('id="actRepliesFootprint"'));
+    check('dashboard html contains actFilesFootprint', html.includes('id="actFilesFootprint"'));
+    check('dashboard html contains actCommandsFootprint', html.includes('id="actCommandsFootprint"'));
+    check('dashboard html contains actImagesFootprint', html.includes('id="actImagesFootprint"'));
+
+    const repliesFp = doc.getElementById('actRepliesFootprint');
+    check('actRepliesFootprint populated', Boolean(repliesFp && repliesFp.textContent.includes('tok')));
+    const filesFp = doc.getElementById('actFilesFootprint');
+    check('actFilesFootprint populated', Boolean(filesFp && filesFp.textContent.includes('tok')));
+    const cmdsFp = doc.getElementById('actCommandsFootprint');
+    check('actCommandsFootprint populated', Boolean(cmdsFp && cmdsFp.textContent.includes('tok')));
+    const imgsFp = doc.getElementById('actImagesFootprint');
+    check('actImagesFootprint populated', Boolean(imgsFp && imgsFp.textContent.includes('tok')));
+
+    // Streamlined Turn & Cache Intelligence tests
+    check('dashboard html contains intelligenceCard', html.includes('id="intelligenceCard"'));
+    const netPillEl = doc.getElementById('metaTrajectoryNetPill');
+    check('metaTrajectoryNetPill populated in DOM', Boolean(netPillEl && netPillEl.textContent.includes('tok net')));
+    const speedupPillEl = doc.getElementById('metaCacheSpeedupPill');
+    check('metaCacheSpeedupPill populated in DOM', Boolean(speedupPillEl && speedupPillEl.textContent.includes('faster')));
+
+    // Codebase Files Drawer filter test
+    check('dashboard html contains actFileFilterInput', html.includes('id="actFileFilterInput"'));
+    vm.runInContext('renderDrawerFiles("nonexistent-test-path-xyz")', ctx);
+    const readListEl = doc.getElementById('actDrawerReadList');
+    check('renderDrawerFiles handles filtering correctly', Boolean(readListEl));
 }
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
   "name": "antigravity-telemetry",
   "displayName": "Antigravity Telemetry - Context & Token Monitor",
   "description": "Live context window usage, prompt cache hit rate, and token intelligence for Antigravity",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "publisher": "HarshMann",
   "license": "MIT",
   "icon": "media/icon.png",
