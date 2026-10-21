@@ -132,14 +132,24 @@ function prepareConversationsForWebview(conversations, selectedId) {
     if (c.id === selectedId) {
       return c;
     }
-    if (!c.stats || !c.stats.contextTimeline || c.stats.contextTimeline.length === 0) {
+    const hasTimeline = c.stats && c.stats.contextTimeline && c.stats.contextTimeline.length > 0;
+    const hasFilesList = c.stats && c.stats.activity && (
+      (c.stats.activity.filesRead && c.stats.activity.filesRead.length > 0) ||
+      (c.stats.activity.filesModified && c.stats.activity.filesModified.length > 0)
+    );
+    if (!hasTimeline && !hasFilesList) {
       return c;
     }
     return {
       ...c,
       stats: {
         ...c.stats,
-        contextTimeline: []
+        contextTimeline: [],
+        activity: c.stats.activity ? {
+          ...c.stats.activity,
+          filesRead: [],
+          filesModified: []
+        } : null
       }
     };
   });
@@ -1070,10 +1080,111 @@ function queryNewRows(sqliteBin, dbPath, lastIdx) {
   return { structural, rows };
 }
 
+// Extracts detailed session activity and tool usage metrics (CLI /context metrics).
+// Inspects the steps table in <id>.db across CLI, IDE, and Extension environments.
+function extractSessionActivity(dbPath, sqliteBin, antigravityDir, cId) {
+  const result = {
+    userPrompts: 0,
+    assistantResponses: 0,
+    executedCommands: 0,
+    filesReadCount: 0,
+    filesRead: [],
+    filesModifiedCount: 0,
+    filesModified: [],
+    subagentsInvoked: 0,
+    webRequests: 0,
+    analyzedImages: 0,
+    totalToolCalls: 0
+  };
+
+  if (!sqliteBin || !dbPath || !fs.existsSync(dbPath)) return result;
+
+  const effectiveAntigravityDir = antigravityDir || path.dirname(path.dirname(dbPath));
+  const effectiveCId = cId || path.basename(dbPath, '.db');
+
+  try {
+    const qCounts = "SELECT " +
+      "count(CASE WHEN step_type = 14 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 THEN 1 END), " +
+      "count(CASE WHEN step_type = 132 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 AND instr(cast(step_payload as text), 'run_command') > 0 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 AND instr(cast(step_payload as text), 'invoke_subagent') > 0 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 AND (instr(cast(step_payload as text), 'read_url_content') > 0 OR instr(cast(step_payload as text), 'search_web') > 0) THEN 1 END), " +
+      "count(CASE WHEN instr(cast(step_payload as text), 'image/') > 0 OR instr(cast(step_payload as text), 'browser_screenshot') > 0 THEN 1 END) " +
+      "FROM steps;";
+
+    const outCounts = execFileSync(sqliteBin, [dbPath, qCounts], { encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    if (outCounts) {
+      const parts = outCounts.split('|').map(n => parseInt(n, 10) || 0);
+      result.userPrompts = parts[0] || 0;
+      result.assistantResponses = parts[1] || 0;
+      result.totalToolCalls = parts[2] || 0;
+      result.executedCommands = parts[3] || 0;
+      result.subagentsInvoked = parts[4] || 0;
+      result.webRequests = parts[5] || 0;
+      result.analyzedImages = parts[6] || 0;
+    }
+
+    const qFiles = "SELECT cast(step_payload as text) FROM steps WHERE (step_type = 15 OR step_type = 132) AND (" +
+      "instr(cast(step_payload as text), 'view_file') > 0 OR " +
+      "instr(cast(step_payload as text), 'read_file') > 0 OR " +
+      "instr(cast(step_payload as text), 'replace_file_content') > 0 OR " +
+      "instr(cast(step_payload as text), 'write_to_file') > 0" +
+    ");";
+
+    const outFiles = execFileSync(sqliteBin, [dbPath, qFiles], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024, timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] });
+    const readSet = new Set();
+    const modSet = new Set();
+    const pathRegex = /"(?:AbsolutePath|TargetFile|filePath|file_path|target_file)":\s*"([^"]+)"/g;
+
+    for (const chunk of outFiles.split('\n')) {
+      if (!chunk) continue;
+      const isRead = chunk.includes('view_file') || chunk.includes('read_file');
+      const isMod = chunk.includes('replace_file_content') || chunk.includes('write_to_file');
+      let match;
+      while ((match = pathRegex.exec(chunk)) !== null) {
+        const raw = match[1].replace(/\\\\/g, '\\');
+        const p = path.normalize(raw);
+        if (isRead) readSet.add(p);
+        if (isMod) modSet.add(p);
+      }
+    }
+
+    result.filesRead = Array.from(readSet);
+    result.filesReadCount = readSet.size;
+    result.filesModified = Array.from(modSet);
+    result.filesModifiedCount = modSet.size;
+
+    let userUpImages = 0;
+    if (effectiveAntigravityDir && effectiveCId) {
+      const userUpDir = path.join(effectiveAntigravityDir, 'brain', effectiveCId, '.user_uploaded');
+      if (fs.existsSync(userUpDir)) {
+        try {
+          userUpImages = fs.readdirSync(userUpDir).filter(f => !f.startsWith('.')).length;
+        } catch { }
+      }
+    }
+    if (userUpImages > result.analyzedImages) {
+      result.analyzedImages = userUpImages;
+    }
+
+    if (result.totalToolCalls === 0) {
+      result.totalToolCalls = result.executedCommands + result.subagentsInvoked + result.webRequests + result.filesRead.length + result.filesModified.length;
+    }
+
+  } catch {
+    // Graceful fallback if table does not exist or database locked
+  }
+
+  return result;
+}
+
 // Reads only the turns that were added since `prior` (when supplied), so an unchanged or
 // already-seen conversation costs a single bounded query instead of a full re-parse.
-function analyzeConversation(dbPath, sqliteBin, prior) {
+function analyzeConversation(dbPath, sqliteBin, prior, antigravityDir, cId) {
   const incremental = Boolean(prior && typeof prior.lastIdx === 'number' && prior.lastIdx >= 0);
+  const effectiveAntigravityDir = antigravityDir || (dbPath ? path.dirname(path.dirname(dbPath)) : null);
+  const effectiveCId = cId || (dbPath ? path.basename(dbPath, '.db') : null);
 
   let lines = [];
   if (incremental) {
@@ -1086,7 +1197,7 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     const s = res.structural;
     // Rows deleted, or the table rewritten with lower indices: rebuild from scratch.
     if (s && (s.count < (prior.totalRows || 0) || s.maxIdx < prior.lastIdx)) {
-      return analyzeConversation(dbPath, sqliteBin, null);
+      return analyzeConversation(dbPath, sqliteBin, null, effectiveAntigravityDir, effectiveCId);
     }
     lines = res.rows;
   } else {
@@ -1100,7 +1211,15 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     if (lines.length === 0) return null;
   }
 
-  if (lines.length === 0) return prior; // DB touched but nothing new to parse
+  if (lines.length === 0) {
+    if (prior && (!prior.activity || prior.activity.assistantResponses === 0)) {
+      prior.activity = extractSessionActivity(dbPath, sqliteBin, effectiveAntigravityDir, effectiveCId);
+      if (prior.activity.assistantResponses === 0 && prior.calls > 0) {
+        prior.activity.assistantResponses = prior.calls;
+      }
+    }
+    return prior; // DB touched but nothing new to parse
+  }
 
   // Running state, seeded from the previous analysis when we are only reading new turns.
   let totalNonCached = incremental ? prior.totalNonCached : 0;
@@ -1299,6 +1418,11 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
   const avgThinking = calls > 0 ? Math.round(totalThinking / calls) : 0;
   const avgCached = calls > 0 ? Math.round(totalCached / calls) : 0;
 
+  const activity = extractSessionActivity(dbPath, sqliteBin, effectiveAntigravityDir, effectiveCId);
+  if (activity.assistantResponses === 0 && calls > 0) {
+    activity.assistantResponses = calls;
+  }
+
   return {
     calls,
     modelName,
@@ -1338,6 +1462,7 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     cacheHitRate: calls > 0 ? ((cacheHits / calls) * 100).toFixed(1) : '0.0',
     cacheVolumeRate: totalInput > 0 ? ((totalCached / totalInput) * 100).toFixed(1) : '0.0',
     thinkingRate: totalOutput > 0 ? ((totalThinking / totalOutput) * 100).toFixed(1) : '0.0',
+    activity,
     contextTimeline
   };
 }
@@ -1738,7 +1863,7 @@ function readAllTelemetry(options = {}) {
     if (entry && !changed && !force) {
       stats = entry.stats; // zero sqlite3 spawns
     } else {
-      stats = analyzeConversation(fullPath, sqliteBin, (shrank || force) ? null : (entry ? entry.stats : null));
+      stats = analyzeConversation(fullPath, sqliteBin, (shrank || force) ? null : (entry ? entry.stats : null), root.antigravityDir, cId);
       if (!stats && entry) stats = entry.stats; // keep the last good reading
       if (!stats) continue;
       analysisCache.set(cId, {
@@ -1908,6 +2033,7 @@ module.exports = {
   extractInDbPrompt,
   extractInDbMetadata,
   getConversationSummaries,
-  findRootForConversation
+  findRootForConversation,
+  extractSessionActivity
 };
 

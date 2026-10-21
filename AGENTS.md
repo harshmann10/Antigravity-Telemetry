@@ -1,458 +1,142 @@
 # AGENTS.md - Antigravity Telemetry Extension
 
-This file provides architectural, technical, and development instructions for any AI assistant working on this codebase.
+This file contains the **core architectural invariants, security rules, and development guidelines** for AI agents working on this codebase.
 
-> 📋 **History:** `DEV_CHANGELOG.md` summarises internal engineering changes by review phase; `CHANGELOG.md` contains user-facing release notes for GitHub releases. **Backlog & open questions:** §9 below. Everything else you need is in this file — read §5 (frontend rules), §6 (invariants) and §9 (known gaps) before making changes.
-
----
-
-## 1. Project Overview
-
-A zero-token, zero-dependency VS Code extension that reads Antigravity's local SQLite databases and
-protobuf telemetry. **User-facing features live in `README.md`** — what matters when editing:
-
-- **Zero npm dependencies.** Node built-ins and the VS Code API only. `media/dashboard.css` is generated at build time and committed.
-- **No network, ever.** Every number comes from local files, so a wrong value is a parsing bug, not a connectivity problem.
-- **Antigravity's files are read-only** except through the explicit `deleteConversation` path.
+> 📚 **Deep Technical Reference:** Binary protobuf layouts, SQLite schemas, subagent decoding tags, and storage locations have been moved to [`REFERENCE.md`](./REFERENCE.md) to keep this rulebook lean and high-signal. Consult [`REFERENCE.md`](./REFERENCE.md) whenever modifying the data engine or parser.
 
 ---
 
-## 2. Directory & Component Structure
+## 1. Prime Directives & Constraints
 
-```text
-G:\web dev\antigravity-telemetry\
-├── .github/workflows/
-│   └── release.yml       # GitHub Actions automated release & packaging pipeline
-├── .vscodeignore         # Packaging ignore patterns for vsce / .vsix builds
-├── package.json          # VS Code extension manifest (activation, commands, settings, build scripts)
-├── extension.js          # Main entry point: Status bar, QuickPick, Webview lifecycle, watchers, message router
-├── telemetryReader.js    # Data engine: SQLite reader, protobuf decoder, analysis cache, storage calculator, delete engine
-├── dashboardHtml.js      # Webview template: Tailwind UI, dual-layer SVG chart, modal, client script
-├── media/                # Dashboard styling: tailwind-input.css (source) + dashboard.css (generated, committed)
-├── scripts/
-│   ├── self-check.js        # Dependency-free verification suite (run after changing telemetryReader.js)
-│   └── extract-changelog.js # Extracts changelog release notes for GitHub releases
-├── AGENTS.md             # AI development instructions, invariants & telemetry specs (this file)
-├── DEV_CHANGELOG.md      # Detailed developer & engineering changelog by review phase
-├── CHANGELOG.md          # User-facing release notes (parsed by GitHub Action release workflow)
-└── README.md             # User guide and features
-```
-
-### Component Roles:
-
-| File                    | Responsibility                                                                                           |
-| ----------------------- | -------------------------------------------------------------------------------------------------------- |
-| `extension.js`          | Status bar, two-level QuickPick, webview lifecycle, watchers, message router, deletion outcome reporting |
-| `telemetryReader.js`    | Protobuf decoder, SQLite queries, incremental analysis cache, storage calculator, delete engine          |
-| `dashboardHtml.js`      | Self-contained webview HTML + client script (nonce CSP, `bindEvents()`, dual-layer SVG chart)            |
-| `media/`                | `tailwind-input.css` (source) → `dashboard.css` (generated, **committed**)                               |
-| `scripts/self-check.js`       | Dependency-free verification suite — run it after touching `telemetryReader.js`                          |
-| `scripts/extract-changelog.js`| Automated release notes extractor targeting `CHANGELOG.md` sections for GitHub Releases                  |
-| `.github/workflows/release.yml`| Automated GitHub Actions workflow to build `.vsix` packages and publish GitHub Releases with assets       |
-
-**Operational facts:**
-
-- **Refresh loop**: 10 s heartbeat that **skips while the window is unfocused** and refreshes on focus regain; guarded by `isRefreshing` so watcher + timer + manual refresh cannot stack.
-- **Watchers**: `conversations/` across all detected installation roots (filtered to `.db` family incl. `-wal`/`-shm`/`-journal`), debounced 400 ms; `conversation_summaries.db`, debounced 600 ms; plus Antigravity IDE's `state.vscdb` in `globalStorage`, debounced 800 ms.
-- **Logging**: `log()` writes to the `Antigravity Telemetry` OutputChannel (`antigravity.showLogs`), never `console`.
-- **Settings** (`getConfig()`): `dataSource` (`auto`, `cli`, `ide`, `extension`, `all`), `deleteToRecycleBin`, `workspaceFilter`, `sqlitePath`.
-- **Exports for tooling and tests**: `readAllTelemetry`, `deleteConversation`, `analyzeConversation`, `validateConversationId`, `clearAnalysisCache`, `dumpAnalysisCache`, `loadAnalysisCache`, `extractSubagentRole`, `recyclePaths`, `parseWorkspaceInfo`, `conversationMatchesWorkspace`, `selectActiveConversation`, `getSqliteBinary`, `setCustomSqlitePath`, `getInstallationRoots`, `getVscdbSummaries`, `parseVscdbTrajectorySummaries`, `extractInDbWorkspaces`, `extractInDbPrompt`, `extractInDbMetadata`.
-- **Delete outcomes** are reported through `reportDeleteResult()`, which distinguishes full success, partial failure (locked files) and "nothing to delete" — never claim bytes that were not freed.
+1. **Zero npm dependencies**: Use Node.js built-ins and the VS Code Extension API only.
+2. **Zero network, ever**: Every metric is read locally from disk. A wrong number is a parser bug, not a connectivity problem.
+3. **Read-only by default**: Antigravity's databases and files must never be written to or mutated, except via the explicit user-triggered `deleteConversation` path.
+4. **Native PowerShell environment**: On Windows, invoke cmdlets and executables directly (`git`, `node`, `Get-ChildItem`). Never wrap in `powershell -Command "..."`.
 
 ---
 
-## 3. Antigravity Storage Architecture & The "Ghost Chat" Problem
+## 2. Strict Agent Invariants (Must NEVER Be Violated)
 
-### Multi-Root Antigravity Ecosystem:
-
-The extension unifies telemetry across three distinct Antigravity environments:
-1. **Antigravity Extension in VS Code**: Root at `%USERPROFILE%\.gemini\antigravity`, catalog at `conversation_summaries.db`.
-2. **Antigravity IDE (VS Code Fork)**: Root at `%USERPROFILE%\.gemini\antigravity-ide`, catalog in VS Code state store `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb` under key `antigravityUnifiedStateSync.trajectorySummaries`.
-3. **Antigravity CLI (Terminal)**: Root at `%USERPROFILE%\.gemini\antigravity-cli`, catalog at `conversation_summaries.db`.
-
-### Storage Locations:
-
-| Path                                                                                                   | Purpose                                                                                                                              | Size / Impact                                     |
-| :----------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------ |
-| `%USERPROFILE%\.gemini\antigravity[-ide]\conversations\<id>.db`                                        | SQLite database with `gen_metadata` table storing protobuf turn telemetry. Also `<id>.db-wal` and `<id>.db-shm`.                     | 1 MB – 15 MB per chat                             |
-| `%USERPROFILE%\.gemini\antigravity\conversation_summaries.db`                                          | Extension catalog table `conversation_summaries` listing conversation ID, title, timestamp, step count.                              | Global database                                   |
-| `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`                                             | IDE catalog table `ItemTable` storing Base64+protobuf trajectory summaries in `antigravityUnifiedStateSync.trajectorySummaries`.     | Global SQLite DB                                  |
-| `<id>.db` tables `trajectory_metadata_blob` & `steps`                                                  | In-DB self-description fallback: workspace URIs (`trajectory_metadata_blob`) & initial user prompt (`steps`, idx=0).                  | Live session fallback                             |
-| `%USERPROFILE%\.gemini\antigravity[-ide]\brain\<id>\`                                                  | Transcripts (`transcript.jsonl`, `transcript_full.jsonl`), `.system_generated/` logs, `.user_uploaded/` media, and `scratch/` files. | **10 MB – 80 MB+ per chat** (major disk consumer) |
-| `%USERPROFILE%\.gemini\antigravity[-ide]\annotations\<id>.pbtxt`                                       | Protobuf text format annotation metadata.                                                                                            | Few KB                                            |
-| `%USERPROFILE%\.gemini\antigravity[-ide]\browser_recordings\<id>\`                                     | Screen and web session recordings (if browser MCP used).                                                                             | Variable                                          |
-| `%USERPROFILE%\.gemini\antigravity[-ide]\implicit\<id>.pb`                                             | Implicit conversation state protobuf.                                                                                                | Few KB                                            |
-
-### The "Ghost Chat" Incomplete Deletion Finding:
-
-> [!WARNING]
-> **Antigravity's own delete only removes the catalog row.** Deleting a chat in the IDE leaves
-> `conversations/<id>.db`, the entire `brain/<id>/` folder (megabytes of transcripts and media) and
-> `annotations/<id>.pbtxt` on disk. Disk space is never freed, and anything reading `conversations/`
-> keeps seeing the dead chat. That is the problem this extension exists to solve.
-
-### Zero-Residue Deletion Engine (`deleteConversation`):
-
-`telemetryReader.js` removes all 7 layers across the target session's specific installation root (`extension` or `ide`) — `conversations/<id>.db` (+`-wal`/`-shm`), `brain/<id>/`,
-`annotations/<id>.pbtxt`, `browser_recordings/<id>/`, `implicit/<id>.pb`, the `conversation_summaries`
-row (if present) — and returns the exact number of freed bytes.
-
-**Rules this engine must keep obeying:**
-
-- **Recycle Bin by default.** `recyclePaths()` moves every target in a single batched PowerShell call
-  (`Microsoft.VisualBasic.FileIO.FileSystem` + `RecycleOption.SendToRecycleBin`), driven by the
-  `AG_RECYCLE_ITEMS` JSON env var. `antigravity.deleteToRecycleBin: false` switches to permanent deletion.
-- **Verify, never assume.** The authoritative check is `fs.existsSync()` _after_ the attempt. A path that still
-  exists goes into `failures[]` and its bytes are **not** counted as freed.
-- **The catalog row is deleted last, and only if every file is gone.** Otherwise a locked DB would leave an
-  orphaned catalog entry — the exact ghost-chat problem this extension exists to fix. `SELECT changes()` confirms
-  the row was actually removed.
-- **Strict UUID validation** before any filesystem or SQL write (`validateConversationId`).
-
----
-
-## 4. Protobuf Wire Schema (`conversations/<id>.db`)
-
-### SQLite Schema:
-
-- Table: `gen_metadata (idx INTEGER, data BLOB, size INTEGER)`
-- Ordered by `idx ASC` for turn progression; latest row is the current turn.
-
-### Protobuf Binary Layout in `gen_metadata.data`:
-
+### A. Strict Git & Release Restraint
 > [!IMPORTANT]
-> **There are TWO different Tag 9 / Tag 10 pairs, in different namespaces.** Usage tokens live under
-> `Tag 1 → Tag 4`; the context counters live under `Tag 1 → Tag 9`. Mixing them up is the easiest mistake to
-> make in this file — check the parent, not just the tag number.
+> **NEVER run `git commit`, `git tag`, `git push`, or trigger a GitHub release autonomously.**
+> - An agent may **only** execute git or release commands when the user **explicitly commands it** in the conversation.
+> - Every commit must include a clear, descriptive message (`git commit -m "..."`). Never commit without a message.
+> - Pre-flight test checks (`npm run self-check`) are intentionally omitted from `.github/workflows/release.yml` to keep releases fast; do NOT add them back to the CI workflow.
 
-```text
-Root Message
- ├── Tag 1 (Message)
- │    ├── Tag 19 (String): Model Name (e.g. "gemini-3.8-flash")
- │    ├── Tag 4 (Message): USAGE METADATA
- │    │    ├── Tag 2  (Varint): Non-cached Input Tokens (fresh prompt / Uncached Input)
- │    │    ├── Tag 5  (Varint): Cached Input Tokens (served from cache / Cache Read)
- │    │    ├── Tag 3  (Varint): Candidates / Output Tokens (total generation)
- │    │    ├── Tag 9  (Varint): Thinking Tokens (internal reasoning)
- │    │    └── Tag 10 (Varint): Response Content Tokens (tool calls + text)
- │    ├── Tag 9 (Message): CONTEXT METADATA          <-- different Tag 9
- │    │    ├── Tag 1  (Varint): last step index
- │    │    └── Tag 10 (Message)
- │    │         ├── Tag 1 (Varint): CURRENT CONTEXT TOKENS  <-- authoritative, see below
- │    │         └── Tag 4 (Varint): CONTEXT CEILING = 256000
- │    └── Tag 20 (Message, repeated): key/value pairs (model_enum, last_execution_id, ...)
- ├── Tag 4 (String): conversation / trajectory UUID
- └── Tag 8 (Message): unexplored
-```
-
-### The authoritative context field (verified in every row of every chat)
-
-`Tag 1 → Tag 9 → Tag 10 → { Tag 1 = context tokens, Tag 4 = 256000 }` is present in **all** rows (41/41 sampled
-across 21 chats, first and last row of each). It is Antigravity's own live context counter and is what actually
-triggers compaction:
-
-| Observation                             | Value                                                                          |
-| --------------------------------------- | ------------------------------------------------------------------------------ |
-| Fresh-chat start (`Tag 1` at row 0)     | 22,451 / 24,050 / 24,551 / 24,551 → fixed system-prompt + tool-schema overhead |
-| Peak before compaction                  | 255,600 - 255,913 → compaction fires at ~99.9 % of 256 k                       |
-| Post-compaction reset                   | back to ~24,183 - 25,662                                                       |
-| vs the extension's `fresh + cached` sum | ratio 0.98 - 1.41, avg 1.06 - 1.12 (i.e. that sum under-reports)               |
-
-Use this field (falling back to `fresh + cached` and 255 k for older chats) for context fill %, the chart
-ceiling, and compaction detection. A sustained drop between consecutive values is a compaction, with an exact drop size (qualified against transient planner V-dips in Antigravity IDE where tool outputs are temporarily pruned and context rebounds within 2 turns).
-
-> [!NOTE]
-> `Tag 9 → Tag 10 → Tag 1` (trajectory context) and `Tag 4 → Tag 5` (API prompt cache) measure
-> **different things** — see §5 for why the chart must clamp one to the other.
-
-> ⚠️ `readVarint` returns a `BigInt` and real rows contain a `2^64-1` sentinel. Use `safeVarintNumber()` /
-> `numField()` — never `Number(val)` directly.
-
-### Formulas:
-
-| Quantity                  | Source                                              |
-| ------------------------- | --------------------------------------------------- |
-| Cache Read                    | `Tag 4 → Tag 5`                                     |
-| Uncached Input (fresh input) | `Tag 4 → Tag 2`                                     |
-| Total Input                   | `Tag 2 + Tag 5`                                     |
-| Model Output              | `Tag 3` = thinking (`Tag 9`) + response (`Tag 10`)  |
-| Grand Total               | Total Input + Model Output                          |
-| Current Context           | `Tag 9 → Tag 10 → Tag 1` (fallback `Tag 2 + Tag 5`) |
-| Context Ceiling           | `Tag 9 → Tag 10 → Tag 4` (fallback 255,000)         |
-
-Context fill % = `min(100, round(Current Context / Ceiling × 100))`.
-
-### Antigravity IDE Catalog Schema (`state.vscdb`):
-
-- **Location**: `%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`
-- **Key**: `antigravityUnifiedStateSync.trajectorySummaries` in SQLite table `ItemTable`.
-- **Value**: UTF-8 Base64 string wrapping binary protobuf records.
-- **Protobuf wire schema**:
-  - `Tag 1` (Repeated Message: Trajectory Summary item):
-    - `Tag 1` (String): Conversation UUID (`id`)
-    - `Tag 2` (Varint): Step count / turns
-    - `Tag 3` (String): Conversation Title
-    - `Tag 5` (Varint): Timestamp (milliseconds or seconds)
-    - `Tag 7` (Varint): Last modified timestamp (seconds)
-    - `Tag 9` (Message): Workspace metadata containing `Tag 1` or `Tag 2` (Workspace URI / directory path)
-    - `Tag 17` / `Tag 21` (Message): Workspace URI references (`file:///...`)
-    - `Tag 23` (Message): Parent conversation linkage
-
-### In-DB Self-Description Fallback Schema (`<id>.db`):
-
-For in-flight / active sessions not yet committed to `state.vscdb`, `<id>.db` contains its own self-description:
-1. **Workspace Paths**:
-   - Table `trajectory_metadata_blob (id TEXT PRIMARY KEY, data BLOB)` where `id = 'main'`.
-   - `Tag 1` (Message) $\rightarrow$ `Tag 7` (Message) $\rightarrow$ repeated `Tag 2` (String): Workspace directory paths (e.g. `g:\web dev\antigravity-telemetry`).
-2. **Conversation Title / First Prompt**:
-   - Table `steps (idx INTEGER PRIMARY KEY, data BLOB)`.
-   - First step at `idx = 0`: Protobuf message with `Tag 19` (Message) $\rightarrow$ `Tag 2` (String): User's initial prompt text. Used as session title fallback.
-
----
-
-## 5. Critical Frontend / Webview Development Rules
-
-### The nonce CSP forbids inline event handlers:
-
+### B. Remote SSH & Distributed IPC Bandwidth
 > [!CAUTION]
-> **NEVER add `onclick="…"`, `onchange="…"` or `oninput="…"` to the dashboard markup.**
->
-> The webview sets a nonce-based CSP (`script-src 'nonce-…'`). A nonce authorises `<script nonce=…>`
-> **elements only** — it does _not_ authorise inline event-handler attributes, which the CSP spec requires
-> `'unsafe-inline'` for. An inline handler therefore fails silently: no error in the UI, just a console
-> violation and a dead control.
->
-> **Safe pattern** — give it an `id` and bind it in `bindEvents()`:
->
-> ```javascript
-> // markup: <button id="refreshBtn">Refresh</button>
-> const el = document.getElementById("refreshBtn");
-> if (el) el.onclick = () => handleRefresh();
-> ```
->
-> Same rule for `style="…"`: `style-src` includes `'unsafe-inline'` so inline style attributes work, but do
-> not add `'unsafe-inline'` to `script-src` — that would defeat the nonce.
+> **NEVER stream multi-megabyte caches or bulk inactive arrays over Webview IPC or VS Code RPC.**
+> In VS Code Remote - SSH, WSL, or Dev Containers, the extension host runs on a remote server while the UI runs on the user's local machine over an encrypted SSH tunnel:
+> 1. **Zero RPC sync for persistent cache**: Never use `context.globalState.update()` for large caches or heartbeat data (this triggers multi-megabyte RPC streaming over the SSH pipe on every tick). Store persistent caches in `context.globalStorageUri` using native Node.js `fs` file operations (0 network bytes).
+> 2. **Selective IPC payload decimation (`prepareConversationsForWebview`)**: Inactive sessions must have bulky arrays (`contextTimeline`, `activity.filesRead`, `activity.filesModified`) stripped to empty `[]` before `webview.postMessage()`. Inactive items retain counts (`filesReadCount`, `calls`), while full arrays load on-demand when selected.
+> 3. **Preserve on-demand data across background ticks (`oldTimelines` & `oldActivities`)**: When routine background polling (`telemetryUpdate`) delivers fresh stripped arrays, `dashboardHtml.js` **must** preserve previously loaded timelines and activity file lists in memory. Never let a routine 10-second tick wipe an inspected file drawer back to empty!
+> 4. **Webview visibility guards**: Mute webview updates when hidden (`!currentPanel.visible`). Skip idle polls if the SQLite signature hasn't changed.
 
-### Building markup in Node template literals:
-
+### C. Webview Security & Nonce CSP
 > [!CAUTION]
-> **Never build markup by concatenating escaped quotes, and never emit an `onclick` attribute.**
->
-> Inside a Node template literal, `\''` unescapes to `''` before the browser sees it, so
-> `"...onclick=\"f('" + id + "')\""` ships as `onclick="f('' + id + '')"` — a page-load `SyntaxError`
-> that halts all dashboard JavaScript. Even when it parses, an `onclick` attribute is blocked by the
-> CSP above. **The only correct pattern is `innerHTML` plus a real listener:**
->
-> ```javascript
-> div.innerHTML = '<button class="del-btn">🗑️</button>';
-> div.querySelector(".del-btn").onclick = (e) => {
->   e.stopPropagation();
->   openDeleteModal(c.id);
-> };
-> ```
+> **NEVER add inline event handlers (`onclick="…"`, `onchange="…"`, `oninput="…"`) to dashboard markup.**
+> The webview sets a strict nonce-based CSP (`script-src 'nonce-…'`). Inline event handlers fail silently with console violations:
+> - **Always bind in `bindEvents()`** via element ID: `document.getElementById('myBtn').onclick = () => ...`.
+> - **Never build markup with quote-concatenation** in template literals: `onclick=\"f('" + id + "')\"` evaluates to `SyntaxError` at load time. Use `div.querySelector('.btn').onclick = (e) => ...`.
 
-### Webview State vs. Background Polling Invariant:
-
+### D. Webview State vs. Background Polling
 > [!CAUTION]
 > **NEVER overwrite interactive webview UI state from background polling messages.**
->
-> Background polling (`telemetryUpdate` triggered by the 10s heartbeat or file watcher debounces) must **only** deliver updated data arrays (`CONVERSATIONS`), and must **never** clobber the user's interactive view filters or selections:
->
-> - **Workspace Filter (`currentWorkspaceFilter`)**: Controlled by the user via the `workspaceSelect` dropdown in the webview. Routine background updates must **not** include or overwrite `currentWorkspaceFilter` with the VS Code setting (`antigravity.workspaceFilter`). Only explicit VS Code settings changes (`workspaceFilterConfigUpdate`) should update it.
-> - **Active Selection (`selectedId`)**: Must **never** be reset back to `currentActiveId` or `filtered[0]` just because a filter, chip, or workspace scope is active. `selectedId` must **only** fall back if the conversation was literally deleted from disk (`!CONVERSATIONS.some(c => c.id === selectedId)`).
-> - **Dropdown Inclusion (`chatSelect`)**: If `selectedId` is outside the current filtered view (e.g., user selected a subagent from a drawer or card while the view chip is on "Chats"), `populateDropdown()` must prepend `selectedId` to `displayList` so the dropdown accurately displays and retains the selected session rather than getting desynced.
+> Routine background updates (`telemetryUpdate` every 10 s or file watcher debounces) must only deliver updated data arrays (`CONVERSATIONS`), and must **never** clobber the user's interactive view filters:
+> - `currentWorkspaceFilter` is controlled by the user via the dropdown; routine ticks must never overwrite it with VS Code settings.
+> - `selectedId` must never be reset back to `currentActiveId` or `filtered[0]` just because a filter chip is clicked. It only falls back if the conversation was literally deleted from disk.
 
-### Layout & Single-Scroll Invariant:
-
+### E. Layout & Viewport Allocation
 > [!IMPORTANT]
 > **Zero dual scrollbars — always use flex viewport allocation.**
->
-> In `dashboardHtml.js`, never let the outer document window and inner lists create nested scrollbars:
-> - `body`: `h-screen overflow-hidden flex flex-col` — the outer window must **never** scroll.
-> - Controls & navigation header: `shrink-0` pinned at top.
-> - Views (`#detailView` and `#listView`): `flex-1 min-h-0 overflow-y-auto`.
-> - `#convList`: `flex-1 min-h-0 overflow-y-auto` (never use hardcoded `max-h-[600px]`).
-> - **Subagent UI formatting**: Truncate task titles at 36 characters with full title in `title="..."` hover tooltip. Avoid noisy `(from "...")` suffixes. Badges must use `min-w-0 flex-1` to prevent badge clipping.
+> - `body`: `h-screen overflow-hidden flex flex-col` — the outer window must never scroll.
+> - Headers & controls: `shrink-0` pinned at top.
+> - Detail and List views: `flex-1 min-h-0 overflow-y-auto`.
 
-### Dual-Layer Chart Visual Integrity:
-
+### F. Dual-Layer Chart Integrity
 > [!CAUTION]
-> **Clamp the cached series to the context series.**
->
-> `pt.input` (trajectory context) and `pt.cached` (API prompt cache) measure different things. After
-> Antigravity prunes tool output, the API cache can still hold the pruned prefix — measured **110,066
-> cached vs 89,058 context** in `c4585504` — so an unclamped emerald series spills above the blue line
-> and reports an impossible >100 % cache rate.
->
-> ```javascript
-> const visualCached = Math.min(pt.cached || 0, pt.input || 0); // geometry only
-> const cachePct =
->   pt.input > 0
->     ? Math.min(100, Math.round(((pt.cached || 0) / pt.input) * 100))
->     : 0;
-> ```
->
-> Keep the raw, unclamped token counts in the tooltip. Covered by self-check section 10.
+> **Clamp the visual cached series to the context series.**
+> After Antigravity prunes tool output, the API prompt cache can exceed the trajectory context line. Always clamp visual geometry:
+> `const visualCached = Math.min(pt.cached || 0, pt.input || 0);` (keep unclamped numbers in the tooltip).
+
+### G. Deletion Safety & Zero-Residue
+> - **Recycle Bin by default**: Batch-send all 7 asset layers via `recyclePaths()` using PowerShell `RecycleOption.SendToRecycleBin`.
+> - **Verify before reporting**: The authoritative check is `fs.existsSync()` *after* deletion. Never claim bytes that were not freed.
+> - **Catalog row purged last**: Delete the row in `conversation_summaries` only after files are confirmed gone.
 
 ---
 
-## 6. Development, Packaging & Verification
+## 3. The Master Invariant Table
 
-### Marketplace Distribution:
+Every row here has caused a real bug in production — keep these rules in mind:
 
-The extension is published on:
-- **VS Code Marketplace**: [HarshMann.antigravity-telemetry](https://marketplace.visualstudio.com/items?itemName=HarshMann.antigravity-telemetry)
-- **Open VSX Registry**: [HarshMann/antigravity-telemetry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry)
+| Trap | What Happens | Rule / Solution |
+| :--- | :--- | :--- |
+| **Inline `onclick` in webview** | Silently fails under nonce CSP (console error only) | Bind dynamically in `bindEvents()` |
+| **`context.globalState` for cache** | Floods Remote SSH tunnels with multi-MB RPC packets | Use `context.globalStorageUri` + Node `fs` |
+| **Wiping files on 10s tick** | Loaded file list vanishes back to "No files read" | Preserve `oldActivities` in `dashboardHtml.js` |
+| **Treating `null` catalog as `{}`** | Healthy chats falsely flagged as "Dead Ghost Chats" | Check `catalogAvailable` explicitly |
+| **Omitting `step_type = 132`** | Misses actual tool execution payloads and commands | Query `WHERE (step_type = 15 OR step_type = 132)` |
+| **`Number(bigint)` on varints** | Sentinel `2^64-1` leaks into UI as `1.8e19` | Use `safeVarintNumber()` / `numField()` |
+| **Deleting catalog row first** | Locked DB leaves orphaned files with no catalog entry | Verify `existsSync` first, delete row last |
+| **Matching workspaces by folder name**| Renamed folder shows 0 chats; short name matches all | Match by normalized path prefix |
+| **Backticks in dashboard template** | Node.js `SyntaxError` halts entire extension | Use plain text or string escapes |
 
-### Reloading After Edits:
+---
 
-In VS Code / VS Code Insiders: Press `Ctrl + Shift + P` $\rightarrow$ **`Developer: Reload Window`**.
+## 4. Component Structure & Roles
 
-### Testing Client Script Without Launching VS Code:
-
-Use `vm.runInContext` on the generated HTML's `<script>` block to catch any syntax or runtime errors before reloading VS Code. Two gotchas:
-
-- Top-level `let`/`const` in the script live in the context's **lexical** scope, so read them back with a second `vm.runInContext('CONVERSATIONS.length', sandbox)` call — they do not appear as properties of the sandbox object.
-- Extract the script body as `html.slice(html.indexOf('>', html.indexOf('<script nonce=')) + 1, html.lastIndexOf('</script>'))`. Do not search for the next `>` inside the body (an `=>` or `>` in the code truncates it).
-
-### Verifying a Change:
-
-```bash
-node scripts/self-check.js   # protobuf math, incremental-vs-full parity, id validation, Recycle Bin round trip
-npm run build:css            # ONLY after changing class names in dashboardHtml.js (output is committed)
-npm run package              # Packages the extension as a standalone .vsix via @vscode/vsce
+```text
+├── package.json          # Manifest: activationEvents, commands, settings (antigravity.dataSource, enableCache, etc.)
+├── extension.js          # Lifecycle: status bar, QuickPick, webview panel, file watchers, message router
+├── telemetryReader.js    # Data engine: SQLite queries, protobuf decoder, multi-root discovery, deletion engine
+├── dashboardHtml.js      # Webview UI: Tailwind markup, dual-layer SVG chart, modal, client script
+├── media/                # Styling: tailwind-input.css (source) → dashboard.css (generated, committed)
+├── scripts/
+│   ├── self-check.js        # 250+ dependency-free unit & integration tests (ALWAYS run after edits)
+│   └── extract-changelog.js # Extracts release notes from CHANGELOG.md for GitHub Releases
+├── REFERENCE.md          # Technical specifications: protobuf wire schemas, SQLite tables, step types
+├── CLI.md                # Antigravity CLI integration architecture and status
+├── UI UX.md              # UI/UX design specifications, collapse states, and visual badges
+├── CHANGELOG.md          # User-facing release notes
+└── DEV_CHANGELOG.md      # Engineering log by review phase
 ```
 
-`media/dashboard.css` is generated but **must be committed** — there is no CDN fallback any more, and the dashboard would render unstyled without it.
+---
 
-### Packaging & Distribution (.vsix):
+## 5. When to Consult Reference Files (Progressive Disclosure)
 
-The extension is packaged as a standalone installer using `@vscode/vsce`:
-- Configuration: `.vscodeignore` excludes development scripts (`scripts/`, dev inputs, etc.) and dev inputs (`tailwind-input.css`).
-- Build command: `npm run package` generates `antigravity-telemetry-1.1.0.vsix` (~314 KB, 12 runtime files including icons).
-- Zero runtime dependencies: all telemetry parsing runs on pure Node built-ins and precompiled CSS.
-
-### Invariants — every row here has already caused a real bug:
-
-| Trap                                                      | What happens                                                                                                                           | Rule                                                                                 |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Inline `onclick` under the nonce CSP                      | Control silently does nothing (console violation only)                                                                                 | Bind in `bindEvents()` (§5)                                                          |
-| Treating a `null` catalog as `{}`                         | Every chat looks like a ghost; healthy chats falsely flagged as ghosts                                                                 | Check `catalogAvailable`                                                             |
-| A new per-conversation field not added to the cache state | Correct on first refresh, silently stale afterwards                                                                                    | Derive from cached state, or add it to the `(mtimeMs, size, walSignature)` signature |
-| `Number(bigint)` on a varint                              | The `2^64-1` sentinel leaks as `1.8e19` into the UI                                                                                    | Use `safeVarintNumber()` / `numField()`                                              |
-| Deleting the catalog row before verifying files           | Creates new ghost chats                                                                                                                | Verify with `existsSync` first, then delete the row                                  |
-| Delimiter-splitting `sqlite3.exe` output                  | Windows rewrites chars < 32 to caret notation (`char(31)` → `^_`), so `split()` silently fails and **every** chat is flagged an orphan | Query with `-json` and `JSON.parse()`                                                |
-| Reading `title` without a `preview` fallback              | 17 of 30 reference rows have an empty `title`                                                                                          | Fall back from `title` to `preview`, then to `'Untitled Conversation'`               |
-| Backticks inside the `dashboardHtml.js` template literal  | Node `SyntaxError` on load                                                                                                             | Plain text in comments                                                               |
-| Background polling overwriting webview state              | The user's scope/selection silently reverts every 10 s                                                                                 | See the webview state invariant in §5                                                |
-| Matching workspaces by folder **name**                    | A renamed folder shows 0 chats; a short name matches everything                                                                        | Match by path prefix (`conversationMatchesWorkspace`)                                |
-| Choosing the active chat before filtering                 | A hidden subagent drives the footer                                                                                                    | Prefer a human chat, from the visible set                                            |
+Before editing specific components, consult their dedicated documentation:
+- **Modifying Protobuf Decoding, SQLite Queries, or Step Types**: Read [`REFERENCE.md`](./REFERENCE.md) (§3, §4, §5).
+- **Modifying Multi-Root Scanning or Deletion Engine**: Read [`REFERENCE.md`](./REFERENCE.md) (§1, §2).
+- **Working on CLI Support or Auto-Detection**: Read [`CLI.md`](./CLI.md).
+- **Working on Dashboard Layout, Badges, or Collapse Controls**: Read [`UI UX.md`](./UI UX.md).
+- **Reviewing Architectural History**: Read [`DEV_CHANGELOG.md`](./DEV_CHANGELOG.md).
 
 ---
 
-## 7. Live-Data Reference (measured 2026-09-22)
+## 6. Verification Workflow
 
-A snapshot of the reference installation — useful for sizing decisions and for judging whether a new UI
-feature will behave sensibly. Re-measure before relying on it.
+Always verify changes with the self-check suite before concluding any task:
 
-- **Catalog vs. UI**: 30 catalog rows, **21** conversation `.db` files (21 visible), 9 rows with no `.db` (aborted subagent task records — real previews, zero bytes), 22 brain folders. No row lacks both title and preview (the `preview` fallback rescues 17 empty-title rows).
-- **Workspaces**: `g:/web dev` 21 rows (**12 visible**), `g:/job` 9 rows (**9 visible**).
-- **Subagents**: 16 catalog rows carry `parent_conversation_id` / `agent_name`, but only **7 have a `.db`** (`firefox_browser` ×8, `browser` ×6, `DeepInvestigator` ×1, `DeepInvestigatorWorkerL0` ×1; `nesting_depth` 0 ×14, 1 ×15, 2 ×1). **5 of the 7 resolve to a named parent**; **2 are unattached** — `2e436dd9` (2.14M tok, parent `1797e61d` is catalog-only) and `ee1db8dd` (34k tok, parent `f1e2afae` has no catalog row). Those two are why the Unattached group exists.
-- **Token share**: human chats **480.56M (99.1%)** vs subagents **4.50M (0.9%)** — subagents are a _session-list noise_ problem, not a token-accounting problem.
-- **Per-model ceiling**: the ceiling belongs to the **model**, not the conversation, and can change mid-session — `e570da32` ran `gemini-3.1-pro-low` at **128,000** for rows 0-29, then switched to `gemini-3.7-flash` / `gemini-3.8-flash` at **256,000** from row 30. The reader takes the newest value (correct for current headroom); the chart guideline is drawn at that latest ceiling across the whole history, so it sits above the real limit for the earlier rows (cosmetic, not fixed).
-
----
-
-## 8. Design Decisions
-
-**Subagents are nested, never hidden — there is deliberately no `antigravity.hideSubagents`.**
-
-- A boolean hide is the wrong primitive: it is a _view preference_ being stored as _behaviour_, it destroys the parent→child relationship (the only genuinely useful thing in the data), and it has no visible state — after a week you cannot tell whether subagents are hidden or simply absent.
-- Instead: nested collapsible drawers (§ Task 3 in `CHANGELOG.md`), a transient per-session view chip (`All` / `Chats` / `Subagents`), and an "Unattached" group so nothing can vanish.
-- **Do not add a `hideSubagents` setting.** If a persistent option is ever genuinely needed, make it a view chip state rather than configuration.
-
-**Bulk automated ghost purging is intentionally removed.**
-- A telemetry tool must prioritize safety and non-destructive observability. SQLite catalog locks, background Antigravity sync, or schema updates can temporarily make healthy active conversations appear unindexed. A bulk "purge" button risked deleting real user transcripts and databases.
-- Safe, individual conversation deletion (`🗑️` trash icon with detailed confirmation modal) provides full cleanup control with zero collateral damage risk.
-
-**Deletion defaults to the Recycle Bin, not permanent removal.** Six storage layers are wiped in
-one action, so recoverability matters more than the few seconds saved.
-
-**Extension Icon & Branding Guidelines (Avoiding the "Box-in-a-Box" Trap):**
-- **Asset Paths & Dimensions**:
-  - `media/icon.png`: **256×256 PNG** (~80 KB, referenced in `package.json`). Displayed in VS Code Extensions sidebar, Marketplace, and webview panel icon.
-  - `logo.png`: **1024×1024 PNG** in repository root for GitHub display and high-res source exports.
-- **The "Box-in-a-Box" Anti-Pattern to NEVER Repeat**:
-  - Never generate or ship an icon with an opaque dark outer rectangular background surrounding an inner rounded border frame.
-  - Because VS Code theme backgrounds (`#18181b`, `#252526`, or light themes) differ from the image's canvas background, any outer dark rectangular margin creates an ugly mismatched square tile with double-border artifacts.
-- **Two Permissible Icon Formats**:
-  1. **Edge-to-Edge Squircle Badge (Current Asset)**: The rounded badge must touch the image canvas borders edge-to-edge (0px outer margin), with the 4 outer corner areas outside the radius masked to **100% transparent PNG alpha**. Corner radius: ~22.5% of dimension.
-  2. **Borderless Floating Glyph (Modern Standard)**: Pure vector glyph (e.g. telemetry waves / arch) floating on a **100% transparent PNG background** with no enclosing box or boundary stroke, scaled to occupy ~85–90% of the canvas.
-- **When Replacing Icons**:
-  - Update both `media/icon.png` (256×256) and `logo.png` (1024×1024).
-  - Run `npm run package` (or `cmd /c npm run package` on Windows) to repackage the `.vsix` installer.
-  - Verify with `node scripts/self-check.js`.
+```powershell
+node scripts/self-check.js   # Verifies protobuf math, parity, cache, IPC decimation, and CLI roots
+npm run build:css            # ONLY needed if adding new Tailwind classes to dashboardHtml.js
+npm run package              # Verifies standalone .vsix packaging via @vscode/vsce
+```
 
 ---
 
-## 9. Known Gaps & Backlog
+## 7. Maintenance Protocol (`AGENTS.md` vs `REFERENCE.md`)
 
-**Open**
+To prevent documentation rot and maintain fast, high-signal AI agent performance, follow this strict division:
 
-1. **~100 KB of stats JSON** is posted to the webview on every refresh. Fine at the current size; if the dashboard ever feels heavy, send only the selected conversation's timeline.
+| Document | Purpose & Content | What to Update & When | Target Size |
+| :--- | :--- | :--- | :--- |
+| **[`AGENTS.md`](./AGENTS.md)** | **Behavioral Invariants & Safety Rules**<br>• Git/Release restraint<br>• Remote SSH bandwidth decimation<br>• Nonce CSP & Webview state rules<br>• Master Invariant Trap Table | Update **only** when discovering a new architectural trap, security rule, or workflow constraint. **Never dump raw schemas, protobuf tags, or SQL tables here.** | **Lean (< 200 lines)** to prevent prompt bloat and attention dilution. |
+| **[`REFERENCE.md`](./REFERENCE.md)** | **Technical Specifications & Schemas**<br>• Protobuf tag maps (`Tag 1 -> Tag 4`, `Tag 1 -> Tag 9`)<br>• SQLite table columns & indexes<br>• Step types (`14`, `15`, `132`) & tool payloads<br>• Multi-root storage paths & deletion layers | Update **immediately** whenever modifying the data engine, discovering new protobuf fields, adding step types, or altering database queries. | **Comprehensive / Living Encyclopedia** |
 
-**Resolved**
-
-- **Antigravity IDE & Multi-Root Support (Issue #1)**: Unified multi-root directory scanning (`.gemini/antigravity` + `.gemini/antigravity-ide`), decoding of Antigravity IDE's `state.vscdb` (`antigravityUnifiedStateSync.trajectorySummaries`), in-DB self-description fallback (`trajectory_metadata_blob` + `steps`) for active/uncataloged sessions, and `antigravity.dataSource` configuration.
-- **Cold start & window-reload latency resolved**: Implemented persistent cache via VS Code `globalState` (`dumpAnalysisCache()` / `loadAnalysisCache()`), catalog summaries caching (`conversation_summaries.db`), and optimized syscalls. Warm restart telemetry load drops from ~3,500 ms down to ~30–50 ms (~98% faster).
-- **Subagent Role Extraction & Hierarchy**: Decoded protobuf `raw_summary` records (`Tag 17 → Tag 8 → Tag 2`) eliminating generic "Untitled Conversation" placeholders. Added interactive collapsible section toggle in detail view.
-- **Manual Refresh in Webview**: Added dedicated header refresh button with live spinning feedback and update confirmation.
-- **Non-JSON catalog fallback completed**: Added full parity for subagent hierarchy (`parent_conversation_id`, `nesting_depth`, `agent_name`, `killed`, and `HEX(raw_summary)` role extraction) to the delimiter-split fallback path.
-- **Bulk automated ghost purging removed**: Replaced with safe per-conversation deletion to eliminate data loss risk from temporary catalog lockouts.
-- **Dual-scroll layout resolved**: Pinned header and flex-1 scroll container eliminate nested scroll jail across viewport sizes.
-- **Packaging workflow established**: Added `.vscodeignore` and `npm run package` producing a self-contained `.vsix` installer.
-
----
-
-## 10. Git & Release Workflow Rules
-
-> [!IMPORTANT]
-> **STRICT AGENT RESTRAINT ON GIT & RELEASES**:
-> AI agents working on this codebase must **NEVER** run `git commit`, `git tag`, `git push`, or trigger a GitHub release autonomously on their own initiative.
-> - An agent may only execute git or release commands **WHEN THE USER EXPLICITLY ASKS TO DO IT** in the conversation.
-> - Every commit must include a clear, descriptive commit message (`git commit -m "..."`). Never commit without a commit message.
-> - Always present changes and let the user decide when to commit and release.
-
-### Release Workflows:
-
-Releases are built and published automatically via `.github/workflows/release.yml`. When the user asks to release, use one of the following methods:
-
-1. **Tag-Triggered Release (Recommended):**
-   ```bash
-   git commit -m "feat: descriptive commit message for changes"
-   git tag v1.0.0
-   git push origin main --tags
-   ```
-   Pushing the `v*` tag triggers the GitHub Action, which extracts notes from `CHANGELOG.md`, packages the `.vsix`, and publishes the release.
-
-2. **Commit Push + GitHub Actions Dispatch:**
-   ```bash
-   git commit -m "feat: descriptive commit message"
-   git push origin main
-   ```
-   Then trigger the workflow manually from GitHub (Actions → **Release** → **Run workflow**). The workflow automatically derives `v<version>` from `package.json` and creates the release on that commit.
-
-3. **Publishing to Marketplaces:**
-   - **VS Code Marketplace:**
-     ```bash
-     npx @vscode/vsce publish
-     ```
-   - **Open VSX Registry:**
-     ```bash
-     npx ovsx publish <vsix-file> -p <OVSX_TOKEN>
-     ```
-
-### Note on GitHub Actions Tests:
-- Pre-flight test checks (`npm run self-check`) have been **intentionally removed from `.github/workflows/release.yml`** by the user to keep the CI release workflow fast and unblocked.
-- **Do NOT re-add test checks or self-checks to `.github/workflows/release.yml`** unless explicitly requested by the user.
-- Local verification (`npm run self-check`) remains available for manual testing on demand.
+### Documentation Invariants:
+1. **Zero Schema Duplication**: Never copy binary schemas or SQL table layouts back into `AGENTS.md`. Always keep them centralized in `REFERENCE.md` and reference them via Markdown links.
+2. **Synchronized Code Updates**: If code in `telemetryReader.js` or `extension.js` alters how a protobuf tag, SQLite column, or tool argument is parsed, `REFERENCE.md` **must** be updated in the same change so technical documentation never drifts from reality.

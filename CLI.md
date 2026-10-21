@@ -1,5 +1,8 @@
 # Antigravity CLI Integration Plan
 
+> 🚧 **Status: In Progress** — Branch `feat/cli-support` rebased on `v1.1.1`.
+> Multi-root catalog discovery, per-catalog cache isolation, CLI root file watchers, running execution state detection, visual `[CLI]` badges, and nested subagent collapse controls are implemented with 223 passing verification tests. Final edge-case testing and UI refinement remain in progress.
+
 This document outlines the architecture, technical requirements, and execution plan for integrating **Antigravity CLI (`agy`)** telemetry into the `antigravity-telemetry` VS Code extension.
 
 ---
@@ -175,3 +178,120 @@ node scripts/self-check.js
    - Verify that the status bar / dashboard detects the update within 400ms without errors or infinite loops.
 5. **Zero-Residue Deletion Test**:
    - Verify deletion of a test conversation cleans up files strictly in `antigravity-cli/` and removes its row from `antigravity-cli/conversation_summaries.db`.
+
+
+---
+
+## 6. Detailed Session Metrics & Context Health Plan (CLI `/context` Issue #3)
+
+### 6.1 Problem & Vision (Elevating Beyond Static Terminal Replication)
+
+> [!IMPORTANT]
+> **Design Philosophy: Inspiration, Not Carbon Copy.**
+> The CLI /context screenshot provides the **mental model** (capacity health, headroom awareness, and component attribution). We must **not** merely copy a flat, static terminal table into the webview.
+>
+> Instead, the VS Code dashboard will deliver a **substantially richer, more interactive experience**:
+> - Smooth animated capacity meter with dynamic color states (Emerald -> Amber -> Rose).
+> - Direct interactivity (clicking the Files row toggles the in-memory file drawer with search & filter).
+> - Proportional context share mini-meters for instant visual scanning.
+> - Flexible Dual-Mode Switcher: **Diagnostic Matrix** for full tabs vs. **Visual Metric Tiles** for split sidebars.
+> - 100% native VS Code theme adaptability.
+The user issue requested exposing detailed session counts normally visible via the CLI `/context` command:
+- **Assistant Responses**: Model reply volume and conversational density.
+- **Files loaded into memory**: Codebase files currently in context.
+- **Executed commands**: Terminal commands run by the agent.
+- **Analyzed images**: Images inspected for visual reasoning.
+
+While the initial Phase 6 implementation extracted these 4 metrics into a 4-card grid, it was a **bare minimum implementation**:
+1. It presented numbers in isolated KPI tiles without relating them to the overall context window.
+2. It stacked 4 activity cards directly above 4 turn intelligence cards, creating **"Card Fatigue"** (8 small boxes competing for attention).
+3. It missed the core value proposition of the CLI `/context` output (shown in user diagnostics):
+   > **"Health Diagnostic: X% in use of 100%"** — answering *where* memory is going and *how much headroom remains* before compaction.
+
+---
+
+### 6.2 Target UI/UX Architecture: Unified Context Health & Intelligence Hub
+
+Replace the two disjointed 4-card sections with a unified two-part observability console:
+
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ 1. CONTEXT HEALTH & CODEBASE IMPACT (CLI /context Experience)                          │
+│    • Health Diagnostic Meter: "Health Diagnostic: 18.2% in use of 256k"                │
+│    • Dynamic Capacity Bar: [████████░░░░░░░░░░░░░░░░░] (46.5k used · 209.5k free)    │
+│    • View Switcher Pill: [ 📋 Diagnostic Table (CLI Style) | 🗂️ Metric Cards ]         │
+│    • Collapsible In-Memory Files Drawer: Search & filter paths read / modified         │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│ 2. STREAMLINED TURN & CACHE INTELLIGENCE                                                │
+│    • Recent Turn Delta (Fresh input vs Output vs Compaction badge)                     │
+│    • Trajectory Bounds & Net Growth (First → Peak → Current · Net Expansion)           │
+│    • Prompt Cache Acceleration (Cache hits %, serving volume, latency multiplier)      │
+└────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### 6.3 Detailed Component Specifications
+
+#### A. Health Diagnostic Hero Bar
+- **Header**: `Health Diagnostic: {usedPct}% in use of {ceilingTokens}`
+- **Headroom Subtitle**: `{usedTokens} used · {freeTokens} free space remaining`
+- **Color-Coded Status Pill**:
+  - 🟢 `Healthy (< 60%)`: Emerald gradient progress bar (`from-emerald-500 to-teal-400`).
+  - 🟡 `Moderate (60% – 85%)`: Amber gradient progress bar (`from-amber-500 to-yellow-400`).
+  - 🔴 `Near Compaction (> 85%)`: Rose gradient progress bar (`from-rose-500 to-red-400`) with alert badge.
+
+#### B. Dual-View Mode Switcher
+Provide an interactive toggle (`#contextViewModeBtn`):
+1. **`[ 📋 Diagnostic Table ]` Mode (Default for full-width views)**:
+   - 4 Columns: `Component / Metric`, `Detail / Quantity`, `Context Tokens`, `Share of Limit`.
+   - Rows:
+     - 🤖 **Active Model**: `s.model` | Ceiling limit | `100% max`
+     - 💬 **User Messages**: `act.userPrompts` messages | Fresh input token estimation | `% of context`
+     - 🧠 **Assistant Responses**: `act.assistantResponses` replies | Output token estimation | `% of context`
+     - 📂 **Files Loaded in Memory**: `act.filesReadCount` files | Context footprint | `[View Files ▾]`
+     - ⚡ **Executed Commands**: `act.executedCommands` commands | Tool call footprint | `% of context`
+     - 🖼️ **Analyzed Images**: `act.analyzedImages` captures | Multimedia footprint | `% of context`
+     - 📊 **Total Context (Used)**: `s.calls` turns | `s.contextTokens` | `s.usedPct%`
+     - 🟢 **Remaining Headroom (Free)**: Safe capacity | `s.freeTokens` | `s.freePct%`
+   - Clicking `[View Files ▾]` expands the Codebase Files drawer directly below the table.
+
+2. **`[ 🗂️ Metric Cards ]` Mode (Optimized for narrow sidebars)**:
+   - 4 modern responsive cards with icons, colored stat badges, and percentage pills:
+     - Card 1: Responses & Autonomy ratio
+     - Card 2: Files in Memory & Modified count
+     - Card 3: Commands & Total tool actions
+     - Card 4: Analyzed Images & Web calls
+
+#### C. Codebase Files Drawer
+- Reused for both modes: displays `Files Read in Memory` (cyan) and `Files Modified / Created` (emerald).
+- Preserved in memory across 10s background `telemetryUpdate` polls via `oldActivities`.
+
+#### D. Refactored Turn Intelligence Section
+Streamline Section 4 from 4 repetitive cards into 3 dense, actionable cards:
+1. **Turn Execution & Compaction**:
+   - Turn number, fresh uncached tokens, output tokens, and explicit compaction badge (`⚡ -42k Compacted` or `Normal`).
+2. **Trajectory Dynamics**:
+   - Min context $\rightarrow$ Current context $\rightarrow$ Peak context.
+   - Net expansion pill: `+{netGrowth} tok net growth`.
+3. **Prompt Cache Acceleration**:
+   - Cache hit rate %, volume served from cache, and estimated speedup multiplier (`~5.2x faster`).
+
+---
+
+### 6.4 Implementation Checklist
+
+1. [ ] **`dashboardHtml.js` Markup**:
+   - Replace basic `#activityCard` with unified `#contextHealthCard`.
+   - Add Health Diagnostic progress bar and percentage pill.
+   - Add Diagnostic Table markup with view mode toggle.
+   - Streamline `#intelligenceCard` into 3 focused operational cards.
+2. [ ] **`dashboardHtml.js` Client Script**:
+   - Calculate headroom tokens (`ceiling - currentContext`) and usage percentage.
+   - Bind view switcher in `bindEvents()` without inline handlers (Nonce CSP compliance).
+   - Populate Diagnostic Table cells and progress bar width dynamically in `renderDetail()`.
+3. [ ] **Build & Styling**:
+   - Run `npm run build:css` to bundle any new utility classes into `media/dashboard.css`.
+4. [ ] **Verification**:
+   - Run `node scripts/self-check.js` to ensure all 254+ test assertions pass with 0 failures.

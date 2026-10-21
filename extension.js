@@ -756,17 +756,17 @@ function openDashboard(selectedConvId) {
       }
     } else if (message.command === 'refresh') {
       updateTelemetry({ force: true });
-    } else if (message.command === 'selectConversation') {
-      activeWebviewConvId = message.conversationId;
-    } else if (message.command === 'getTimeline') {
+    } else if (message.command === 'selectConversation' || message.command === 'getTimeline') {
       activeWebviewConvId = message.conversationId;
       const conv = telemetryState.conversations.find(c => c.id === message.conversationId);
       const timeline = (conv && conv.stats && conv.stats.contextTimeline) ? conv.stats.contextTimeline : [];
+      const activity = (conv && conv.stats && conv.stats.activity) ? conv.stats.activity : null;
       if (currentPanel && currentPanel.visible) {
         currentPanel.webview.postMessage({
           type: 'timelineData',
           conversationId: message.conversationId,
-          timeline
+          timeline,
+          activity
         });
       }
     }

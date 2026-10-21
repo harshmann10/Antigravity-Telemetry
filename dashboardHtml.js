@@ -301,6 +301,22 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         <div id="chartContainer" class="h-44 w-full inner-bg border border-color rounded-lg relative overflow-hidden flex items-center justify-center select-none">
           <svg id="timelineSvg" class="w-full h-full" style="display: block;"></svg>
 
+          <!-- Chart Loading Overlay -->
+          <div id="chartLoadingOverlay" class="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 z-20 hidden select-none pointer-events-none transition-opacity duration-150">
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg inner-bg border border-color shadow-xl">
+              <svg class="w-4 h-4 text-blue-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span id="chartLoadingText" class="text-xs font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">Loading turn timeline...</span>
+            </div>
+          </div>
+
+          <!-- Chart Empty State -->
+          <div id="chartEmptyState" class="absolute inset-0 hidden flex items-center justify-center text-xs muted-color italic pointer-events-none select-none">
+            No turns recorded yet
+          </div>
+
           <!-- Floating Inspection Tooltip -->
           <div id="chartTooltip" class="absolute hidden pointer-events-none p-2.5 inner-bg border border-color rounded-lg shadow-xl text-xs z-30 transition-all duration-75">
             <div class="flex items-center justify-between gap-3 border-b border-color pb-1 mb-1.5">
@@ -332,6 +348,108 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <span>Start (Turn 1)</span>
           <span class="text-[9px] muted-color">Hover over graph to inspect turn details</span>
           <span>Latest Turn</span>
+        </div>
+      </div>
+
+      <!-- SESSION OPERATIONS & ACTIVITY (ISSUE #3 /context metrics) -->
+      <div id="activityCard" class="p-3 card-bg border border-color rounded-xl space-y-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            <div>
+              <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Session Operations & Activity</h3>
+              <p class="text-[10px] muted-color">Operational telemetry, tool invocations & codebase impact</p>
+            </div>
+          </div>
+          <button id="actToggleFilesBtn" class="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-semibold inner-bg border border-color hover:border-blue-500/40 text-[var(--vscode-editor-foreground,#f4f4f5)] hover:text-blue-300 transition-colors shadow-sm select-none" title="Toggle list of files read in memory and modified">
+            <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+            <span>Files Touched (<span id="actFilesBadgeCount">0</span>)</span>
+            <span id="actFilesChevron" class="text-[9px] text-zinc-400 transition-transform">▼</span>
+          </button>
+        </div>
+
+        <!-- 4 Activity Metrics Grid -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <!-- Metric 1: Assistant Responses -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+                Responses
+              </span>
+            </div>
+            <div id="actAssistantReplies" class="text-base font-bold text-blue-400">0</div>
+            <div id="actUserPromptsSub" class="text-[10px] muted-color truncate" title="User prompts and autonomy ratio">0 prompts · 0.0 turns/prompt</div>
+          </div>
+
+          <!-- Metric 2: Codebase Files -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-cyan-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                Files In Memory
+              </span>
+            </div>
+            <div id="actFilesRead" class="text-base font-bold text-cyan-400">0</div>
+            <div id="actFilesModifiedSub" class="text-[10px] muted-color truncate" title="Files modified or created">0 modified / created</div>
+          </div>
+
+          <!-- Metric 3: Executed Commands -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                Commands Executed
+              </span>
+            </div>
+            <div id="actCommands" class="text-base font-bold text-emerald-400">0</div>
+            <div id="actTotalToolsSub" class="text-[10px] muted-color truncate" title="Total tool actions completed">0 total tool actions</div>
+          </div>
+
+          <!-- Metric 4: Visual & Web Operations -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-purple-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                Analyzed Images
+              </span>
+            </div>
+            <div id="actImages" class="text-base font-bold text-purple-400">0</div>
+            <div id="actSubagentsWebSub" class="text-[10px] muted-color truncate" title="Subagents and web requests">0 subagents · 0 web calls</div>
+          </div>
+        </div>
+
+        <!-- Collapsible Files Inspector Drawer -->
+        <div id="actFilesDrawer" class="hidden inner-bg border border-color rounded-lg p-3 space-y-2.5">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <!-- Files Read in Memory -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between text-[11px] font-semibold border-b border-color pb-1 text-cyan-300">
+                <span class="flex items-center gap-1">
+                  <svg class="w-3 h-3 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                  Files Read in Memory
+                </span>
+                <span id="actDrawerReadCount" class="px-1.5 py-0.2 rounded text-[10px] inner-bg border border-color text-zinc-300 font-mono">0</span>
+              </div>
+              <div id="actDrawerReadList" class="max-h-48 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
+                <div class="muted-color italic text-[11px]">No files read</div>
+              </div>
+            </div>
+
+            <!-- Files Modified or Created -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between text-[11px] font-semibold border-b border-color pb-1 text-emerald-300">
+                <span class="flex items-center gap-1">
+                  <svg class="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Files Modified / Created
+                </span>
+                <span id="actDrawerModCount" class="px-1.5 py-0.2 rounded text-[10px] inner-bg border border-color text-zinc-300 font-mono">0</span>
+              </div>
+              <div id="actDrawerModList" class="max-h-48 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
+                <div class="muted-color italic text-[11px]">No files modified</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -516,6 +634,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     let collapsedSubagents = new Set();
     let unattachedExpanded = false;
     let subagentsCardCollapsed = false;
+    let activityFilesOpen = false;
+    let isLoadingTimeline = false;
     let isRefreshing = false;
     let refreshTimeout = null;
 
@@ -538,16 +658,28 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         const target = CONVERSATIONS.find(c => c.id === msg.conversationId);
         if (target && target.stats) {
           target.stats.contextTimeline = msg.timeline || [];
+          if (msg.activity) {
+            target.stats.activity = msg.activity;
+          }
         }
         if (selectedId === msg.conversationId) {
+          isLoadingTimeline = false;
           currentTimeline = msg.timeline || [];
           renderChart(currentTimeline);
+          renderDetail();
         }
       } else if (msg && msg.type === 'telemetryUpdate') {
         const oldTimelines = new Map();
+        const oldActivities = new Map();
         for (const c of CONVERSATIONS) {
           if (c.stats && c.stats.contextTimeline && c.stats.contextTimeline.length > 0) {
             oldTimelines.set(c.id, c.stats.contextTimeline);
+          }
+          if (c.stats && c.stats.activity && (
+            (c.stats.activity.filesRead && c.stats.activity.filesRead.length > 0) ||
+            (c.stats.activity.filesModified && c.stats.activity.filesModified.length > 0)
+          )) {
+            oldActivities.set(c.id, c.stats.activity);
           }
         }
         CONVERSATIONS = msg.data;
@@ -555,6 +687,17 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           if ((!c.stats || !c.stats.contextTimeline || c.stats.contextTimeline.length === 0) && oldTimelines.has(c.id)) {
             if (!c.stats) c.stats = {};
             c.stats.contextTimeline = oldTimelines.get(c.id);
+          }
+          if (oldActivities.has(c.id)) {
+            const oldAct = oldActivities.get(c.id);
+            if (c.stats && c.stats.activity) {
+              if ((!c.stats.activity.filesRead || c.stats.activity.filesRead.length === 0) && oldAct.filesRead && oldAct.filesRead.length > 0) {
+                c.stats.activity.filesRead = oldAct.filesRead;
+              }
+              if ((!c.stats.activity.filesModified || c.stats.activity.filesModified.length === 0) && oldAct.filesModified && oldAct.filesModified.length > 0) {
+                c.stats.activity.filesModified = oldAct.filesModified;
+              }
+            }
           }
         }
         if (msg.activeId) {
@@ -954,10 +1097,12 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
     function selectConv(id) {
       selectedId = id;
+      const conv = CONVERSATIONS.find(c => c.id === id);
+      const needsTimeline = Boolean(conv && conv.stats && (!conv.stats.contextTimeline || conv.stats.contextTimeline.length === 0) && conv.stats.calls > 0);
+      isLoadingTimeline = needsTimeline;
       try {
         vscode.postMessage({ command: 'selectConversation', conversationId: id });
-        const conv = CONVERSATIONS.find(c => c.id === id);
-        if (conv && conv.stats && (!conv.stats.contextTimeline || conv.stats.contextTimeline.length === 0) && conv.stats.calls > 0) {
+        if (needsTimeline) {
           vscode.postMessage({ command: 'getTimeline', conversationId: id });
         }
       } catch {}
@@ -1064,7 +1209,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             '</div>' +
           '</div>' +
           '<div class="flex items-center justify-between text-[10px] muted-color">' +
-            '<span>' + (c.stats ? c.stats.calls : 0) + ' calls · ' + c.stepCount + ' steps</span>' +
+            '<span>' + (c.stats ? c.stats.calls : 0) + ' calls · ' + c.stepCount + ' steps' + (c.stats && c.stats.activity && c.stats.activity.totalToolCalls > 0 ? ' · ' + c.stats.activity.totalToolCalls + ' tools' : '') + '</span>' +
             '<div class="flex items-center gap-2 font-mono font-medium">' +
               '<span class="text-zinc-400">' + storageMB + '</span>' +
               '<span>' + totalM + 'M tok</span>' +
@@ -1748,6 +1893,82 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       document.getElementById('legOutput').textContent = (s.totalOutput || 0).toLocaleString() + ' tok';
       document.getElementById('legOutputPct').textContent = pctOut + '%';
 
+      // Session Operations & Activity (Issue #3 /context metrics)
+      const act = s.activity || {
+        userPrompts: 0,
+        assistantResponses: s.calls || 0,
+        executedCommands: 0,
+        filesReadCount: 0,
+        filesRead: [],
+        filesModifiedCount: 0,
+        filesModified: [],
+        subagentsInvoked: 0,
+        webRequests: 0,
+        analyzedImages: 0,
+        totalToolCalls: 0
+      };
+
+      const replies = act.assistantResponses || s.calls || 0;
+      const prompts = act.userPrompts || 0;
+      const autonomy = prompts > 0 ? (replies / prompts).toFixed(1) : (replies > 0 ? replies.toFixed(1) : '1.0');
+
+      document.getElementById('actAssistantReplies').textContent = replies.toLocaleString();
+      document.getElementById('actUserPromptsSub').textContent = prompts + ' prompt' + (prompts === 1 ? '' : 's') + ' · ' + autonomy + ' turns/prompt';
+      document.getElementById('actUserPromptsSub').title = prompts + ' user prompts · ' + autonomy + ' agent turns per prompt (autonomy ratio)';
+
+      document.getElementById('actFilesRead').textContent = (act.filesReadCount || 0).toLocaleString();
+      document.getElementById('actFilesModifiedSub').textContent = (act.filesModifiedCount || 0) + ' modified / created';
+
+      document.getElementById('actCommands').textContent = (act.executedCommands || 0).toLocaleString();
+      document.getElementById('actTotalToolsSub').textContent = (act.totalToolCalls || 0).toLocaleString() + ' total tool actions';
+
+      document.getElementById('actImages').textContent = (act.analyzedImages || 0).toLocaleString();
+      document.getElementById('actSubagentsWebSub').textContent = (act.subagentsInvoked || 0) + ' subagents · ' + (act.webRequests || 0) + ' web calls';
+
+      const badgeCountEl = document.getElementById('actFilesBadgeCount');
+      if (badgeCountEl) badgeCountEl.textContent = (act.filesReadCount || 0) + ' read · ' + (act.filesModifiedCount || 0) + ' mod';
+
+      // Populate file lists in drawer
+      const readListEl = document.getElementById('actDrawerReadList');
+      const readCountEl = document.getElementById('actDrawerReadCount');
+      if (readCountEl) readCountEl.textContent = (act.filesReadCount || 0);
+      if (readListEl) {
+        if (Array.isArray(act.filesRead) && act.filesRead.length > 0) {
+          readListEl.innerHTML = act.filesRead.map(f => {
+            const base = escapeHtml(f.split(/[\\/]/).pop() || f);
+            return '<div class="truncate p-1 inner-bg rounded border border-color hover:border-cyan-500/30 flex items-center justify-between gap-1" title="' + escapeHtml(f) + '">' +
+              '<span class="truncate">' + base + '</span>' +
+              '<span class="text-[9px] muted-color font-sans shrink-0 truncate max-w-[50%]">' + escapeHtml(f) + '</span>' +
+            '</div>';
+          }).join('');
+        } else if (act.filesReadCount > 0) {
+          readListEl.innerHTML = '<div class="text-cyan-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesReadCount + ' files in memory...</span></div>';
+        } else {
+          readListEl.innerHTML = '<div class="muted-color italic text-[11px] p-1">No files read in memory</div>';
+        }
+      }
+
+      const modListEl = document.getElementById('actDrawerModList');
+      const modCountEl = document.getElementById('actDrawerModCount');
+      if (modCountEl) modCountEl.textContent = (act.filesModifiedCount || 0);
+      if (modListEl) {
+        if (Array.isArray(act.filesModified) && act.filesModified.length > 0) {
+          modListEl.innerHTML = act.filesModified.map(f => {
+            const base = escapeHtml(f.split(/[\\/]/).pop() || f);
+            return '<div class="truncate p-1 inner-bg rounded border border-color hover:border-emerald-500/30 flex items-center justify-between gap-1" title="' + escapeHtml(f) + '">' +
+              '<span class="truncate text-emerald-300 font-semibold">' + base + '</span>' +
+              '<span class="text-[9px] muted-color font-sans shrink-0 truncate max-w-[50%]">' + escapeHtml(f) + '</span>' +
+            '</div>';
+          }).join('');
+        } else if (act.filesModifiedCount > 0) {
+          modListEl.innerHTML = '<div class="text-emerald-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesModifiedCount + ' modified files...</span></div>';
+        } else {
+          modListEl.innerHTML = '<div class="muted-color italic text-[11px] p-1">No files modified or created</div>';
+        }
+      }
+
+      updateActivityFilesState();
+
       // Session Intelligence & Turn Metrics
       // Card 1: Last Turn Activity
       const lt = s.lastTurn;
@@ -1818,21 +2039,71 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
     }
 
+    function toggleActivityFiles() {
+      activityFilesOpen = !activityFilesOpen;
+      updateActivityFilesState();
+    }
+
+    function updateActivityFilesState() {
+      const drawer = document.getElementById('actFilesDrawer');
+      const chevron = document.getElementById('actFilesChevron');
+      if (!drawer) return;
+      if (activityFilesOpen) {
+        drawer.classList.remove('hidden');
+        if (chevron) chevron.textContent = '▲';
+      } else {
+        drawer.classList.add('hidden');
+        if (chevron) chevron.textContent = '▼';
+      }
+    }
+
     let lastRenderedChartId = null;
     let lastRenderedTimelineLen = 0;
     let lastRenderedLastInput = null;
 
     function renderChart(timeline, forceRedraw = false) {
       const svg = document.getElementById('timelineSvg');
+      const tooltip = document.getElementById('chartTooltip');
+      const loadingOverlay = document.getElementById('chartLoadingOverlay');
+      const emptyState = document.getElementById('chartEmptyState');
+      const countEl = document.getElementById('chartPointsCount');
+      const conv = CONVERSATIONS.find(c => c.id === selectedId);
+      const calls = (conv && conv.stats && conv.stats.calls) || 0;
+
       if (!timeline || timeline.length === 0) {
-        svg.innerHTML = '';
-        const tooltip = document.getElementById('chartTooltip');
+        if (svg) svg.innerHTML = '';
         if (tooltip) tooltip.classList.add('hidden');
-        document.getElementById('chartPointsCount').textContent = '0 points';
         lastRenderedChartId = null;
         lastRenderedTimelineLen = 0;
         lastRenderedLastInput = null;
+
+        if (isLoadingTimeline || calls > 0) {
+          if (loadingOverlay) {
+            loadingOverlay.classList.remove('hidden');
+            const txt = document.getElementById('chartLoadingText');
+            if (txt) txt.textContent = 'Loading trajectory timeline (' + calls + ' turn' + (calls === 1 ? '' : 's') + ')...';
+          }
+          if (emptyState) emptyState.classList.add('hidden');
+          if (countEl) {
+            countEl.textContent = 'Loading turns...';
+            countEl.className = 'text-[10px] px-2 py-0.5 rounded inner-bg border border-blue-500/30 text-blue-400 font-semibold animate-pulse';
+          }
+        } else {
+          if (loadingOverlay) loadingOverlay.classList.add('hidden');
+          if (emptyState) emptyState.classList.remove('hidden');
+          if (countEl) {
+            countEl.textContent = '0 points';
+            countEl.className = 'text-[10px] px-2 py-0.5 rounded inner-bg border border-color muted-color';
+          }
+        }
         return;
+      }
+
+      if (loadingOverlay) loadingOverlay.classList.add('hidden');
+      if (emptyState) emptyState.classList.add('hidden');
+      if (countEl) {
+        countEl.textContent = timeline.length + (timeline.length === 1 ? ' point' : ' points');
+        countEl.className = 'text-[10px] px-2 py-0.5 rounded inner-bg border border-color muted-color';
       }
 
       const lastPoint = timeline[timeline.length - 1];
@@ -1846,10 +2117,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       lastRenderedLastInput = lastInput;
 
       if (svg) svg.innerHTML = '';
-      const tooltip = document.getElementById('chartTooltip');
       if (tooltip) tooltip.classList.add('hidden');
-
-      document.getElementById('chartPointsCount').textContent = timeline.length + ' data points';
 
       const w = svg.clientWidth || 500;
       const h = svg.clientHeight || 170;
@@ -1861,7 +2129,6 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       const chartH = h - padTop - padBottom;
 
       // Compaction ceiling calibrated to 256,000 tokens (or conversation limit)
-      const conv = CONVERSATIONS.find(c => c.id === selectedId);
       const ceilingTokens = (conv && conv.stats && conv.stats.contextLimit) || 256000;
       const maxDataTokens = Math.max(...timeline.map(t => Math.max(t.input || 0, t.cached || 0))) || 1;
       const maxVal = Math.max(ceilingTokens, maxDataTokens * 1.05);
@@ -2103,7 +2370,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         ['deleteChatBtn', () => promptDeleteCurrent()],
         ['delModalCancelBtn', () => closeDeleteModal()],
         ['delModalConfirmBtn', () => confirmDeleteExec()],
-        ['subagentsToggleBtn', () => toggleSubagentsCollapse()]
+        ['subagentsToggleBtn', () => toggleSubagentsCollapse()],
+        ['actToggleFilesBtn', () => toggleActivityFiles()]
       ];
       for (const [id, handler] of handlers) {
         if (!handler) continue;

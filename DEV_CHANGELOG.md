@@ -3,6 +3,67 @@
 Technical and architectural notes for Antigravity Telemetry, grouped by development and review phases.
 For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 
+## 2026-10-18 — Phase 7: Session Operations & Activity Telemetry (Issue #3)
+
+**Task 1 — Core Metrics & Fast SQLite Activity Extraction**
+- Implemented Suggestion 2 from GitHub Issue #3 across all three supported environments (Antigravity CLI, VS Code Extension, and standalone Antigravity IDE).
+- Designed zero-dependency, ultra-fast SQLite aggregation querying the `steps` table in `<id>.db` across indexed `step_type` values:
+  - `step_type = 14`: User input prompts (`userPrompts`).
+  - `step_type = 15`: Model / assistant planner turns (`assistantResponses`).
+  - `step_type = 132`: Tool execution observations / results (`totalToolCalls`).
+  - Conditional string inspection on `step_payload`:
+    - `run_command`: Terminal commands executed (`executedCommands`).
+    - `invoke_subagent`: Background subagent delegations (`subagentsInvoked`).
+    - `read_url_content` / `search_web`: Web search and fetch requests (`webRequests`).
+    - `image/` / `browser_screenshot`: Image inputs analyzed (`analyzedImages`), reconciled against `.user_uploaded` folder in `brain/<id>/`.
+- Added regex path extraction on `AbsolutePath` and `TargetFile` attributes:
+  - `view_file` / `read_file`: Files read in memory (`filesReadCount`, `filesRead[]`).
+  - `replace_file_content` / `write_to_file`: Files modified or created (`filesModifiedCount`, `filesModified[]`).
+  - Normalized path delimiters via `path.normalize()` to eliminate duplicate path representations across Windows (`\`) and POSIX (`/`) tooling conventions.
+- Runs in < 30ms even on conversations with 350+ turns, falling back gracefully to defaults if the `steps` table is uninitialized.
+
+**Task 2 — Extended Metrics & Autonomy Ratio**
+- Extracted high-value metrics beyond Issue #3 scope:
+  - Autonomy Ratio (`turns/prompt`): Ratio of assistant responses per user prompt, indicating autonomous reasoning depth.
+  - Codebase impact split: Distinguishes read-only inspection files vs modified/created files.
+  - Total tool actions completed across all capabilities.
+
+**Task 3 — Webview IPC Bandwidth Optimization**
+- Updated `prepareConversationsForWebview` in `telemetryReader.js` so that inactive conversations strip heavy `filesRead` and `filesModified` arrays while preserving summary counts (`filesReadCount`, `filesModifiedCount`, `executedCommands`, `totalToolCalls`).
+- The active / selected conversation retains the full file path arrays for inspector rendering.
+- When selecting an inactive conversation, `extension.js` streams the full `activity` object alongside on-demand `timelineData`.
+
+**Task 4 — Interactive Webview "Session Operations & Activity" Card & Files Inspector**
+- Added a dedicated "Session Operations & Activity" card in `#detailView`:
+  - 4-metric KPI grid: Assistant Responses & Autonomy, Codebase Files touched, Executed Commands & Tools, Visual & Web operations.
+  - Header badge displaying combined files touched (`N read · M mod`).
+  - Interactive "Files Touched" toggle button that expands a collapsible two-column Files Inspector drawer:
+    - Left column: List of files read in memory with file basenames and truncated full paths.
+    - Right column: List of files modified or created with emerald badges.
+  - Compact operational indicator in session list rows (`· N tools`).
+  - Strictly compliant with CSP: Event listeners bound in `bindEvents()`, zero inline `onclick` handlers, flex viewport single-scroll layout.
+
+**Task 5 — Verification Suite Expansion (Section 14)**
+- Added Section 14 to `scripts/self-check.js` covering:
+  - `extractSessionActivity` schema validation and fallback safety.
+  - Telemetry read parity with real activity extraction across CLI, IDE, and Extension.
+  - Path deduplication and array uniqueness tests.
+  - Remote SSH bandwidth payload optimization verification.
+  - Synthetic DOM rendering, activity KPI population, and files drawer toggle state management.
+
+**Task 6 — Heavy Chat Loading Indicator & Drawer Visual States**
+- Added visual feedback when switching to heavy chats while on-demand turn timeline arrays and detailed file lists are streamed over IPC:
+  - Chart Loading Overlay (`#chartLoadingOverlay`): Semi-transparent backdrop with spinning indicator and text `Loading trajectory timeline (X turns)...`, preventing the perception of a broken blank graph.
+  - Pulsing Points Badge (`#chartPointsCount`): Pulses with `Loading turns...` in blue while the request is in flight, transitioning cleanly to `X points` on completion.
+  - Empty Chart State (`#chartEmptyState`): Displays a clean centered `No turns recorded yet` message when switching to new sessions with 0 calls.
+  - Files Drawer Loading State: If the user opens the Files Touched drawer before the file list stream arrives, displays an animated `Loading X files in memory...` instead of a misleading "No files read" message.
+  - Silenced sqlite3 stderr in `extractSessionActivity` via `stdio: ['pipe', 'pipe', 'ignore']` for clean diagnostics on synthetic fixtures and locked databases.
+- Updated Section 14 in `scripts/self-check.js` to assert loading overlay, empty state, and transition behavior.
+- Rebuilt `media/dashboard.css` via Tailwind CLI and verified standalone packaging with `@vscode/vsce` (`antigravity-telemetry-1.1.1.vsix`, 327.72 KB).
+- Total tests passing: **254 passed, 0 failed**.
+
+---
+
 ## 2026-10-16 — Phase 6: Antigravity CLI Integration & Multi-Source Synthesis
 
 **Task 1 — CLI Installation Discovery & Data Source Consolidation**

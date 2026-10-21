@@ -1417,6 +1417,184 @@ function testAntigravityCliSupport() {
     }
 }
 
+// 14. session operations & activity metrics (issue #3)
+function testSessionOperationsAndActivity() {
+    section('14. session operations & activity metrics (issue #3)');
+
+    check('extractSessionActivity exported', typeof reader.extractSessionActivity === 'function');
+
+    // Default return on missing/invalid input
+    const emptyResult = reader.extractSessionActivity('non-existent-path.db', 'invalid-bin');
+    check('extractSessionActivity returns safe defaults on missing file',
+        emptyResult &&
+        emptyResult.userPrompts === 0 &&
+        emptyResult.assistantResponses === 0 &&
+        emptyResult.executedCommands === 0 &&
+        emptyResult.filesReadCount === 0 &&
+        Array.isArray(emptyResult.filesRead) &&
+        emptyResult.filesModifiedCount === 0 &&
+        Array.isArray(emptyResult.filesModified) &&
+        emptyResult.totalToolCalls === 0
+    );
+
+    // Read all telemetry across all sources
+    const allData = reader.readAllTelemetry({ dataSource: 'all' });
+    check('readAllTelemetry returns conversations with activity',
+        Array.isArray(allData.conversations) && allData.conversations.length > 0 &&
+        allData.conversations.some(c => c.stats && c.stats.activity)
+    );
+
+    const activeConv = allData.active || allData.conversations[0];
+    const convWithActivity = allData.conversations.find(c => c.stats && c.stats.activity && c.stats.activity.assistantResponses > 0) || activeConv;
+
+    if (convWithActivity && convWithActivity.stats && convWithActivity.stats.activity) {
+        const act = convWithActivity.stats.activity;
+        check('activity contains non-negative userPrompts', typeof act.userPrompts === 'number' && act.userPrompts >= 0);
+        check('activity contains assistantResponses', typeof act.assistantResponses === 'number' && act.assistantResponses > 0);
+        check('activity contains executedCommands count', typeof act.executedCommands === 'number' && act.executedCommands >= 0);
+        check('activity contains filesReadCount and filesRead array', typeof act.filesReadCount === 'number' && Array.isArray(act.filesRead));
+        check('activity contains filesModifiedCount and filesModified array', typeof act.filesModifiedCount === 'number' && Array.isArray(act.filesModified));
+        check('filesRead paths are unique', new Set(act.filesRead).size === act.filesRead.length);
+        check('filesModified paths are unique', new Set(act.filesModified).size === act.filesModified.length);
+        check('activity contains totalToolCalls', typeof act.totalToolCalls === 'number' && act.totalToolCalls >= 0);
+    }
+
+    // Verify prepareConversationsForWebview bandwidth optimization
+    if (allData.conversations.length > 1) {
+        const selId = allData.conversations[0].id;
+        const prepared = reader.prepareConversationsForWebview(allData.conversations, selId);
+        const sel = prepared.find(c => c.id === selId);
+        const nonSel = prepared.find(c => c.id !== selId && c.stats && c.stats.activity);
+
+        check('selected conversation retains filesRead array', sel && sel.stats && sel.stats.activity && Array.isArray(sel.stats.activity.filesRead));
+        if (nonSel) {
+            check('inactive conversation strips filesRead array to save bandwidth',
+                nonSel.stats.activity.filesRead.length === 0 && nonSel.stats.activity.filesModified.length === 0);
+            check('inactive conversation retains filesReadCount and metrics',
+                typeof nonSel.stats.activity.filesReadCount === 'number' &&
+                typeof nonSel.stats.activity.executedCommands === 'number' &&
+                typeof nonSel.stats.activity.assistantResponses === 'number');
+        }
+    }
+
+    // Dashboard rendering test: Activity card and elements populated
+    const { getDashboardHtml } = require('../dashboardHtml');
+    const vm = require('vm');
+    const html = getDashboardHtml(allData.conversations, activeConv ? activeConv.id : '', {
+        workspaceFilter: 'all',
+        currentWorkspacePaths: []
+    });
+
+    check('dashboard html contains activityCard', html.includes('id="activityCard"'));
+    check('dashboard html contains actToggleFilesBtn', html.includes('id="actToggleFilesBtn"'));
+    check('dashboard html contains actFilesDrawer', html.includes('id="actFilesDrawer"'));
+
+    function makeActivityDomMock() {
+        const elements = new Map();
+        function makeEl(tag) {
+            return {
+                tag,
+                options: [],
+                children: [],
+                selectedIndex: 0,
+                get value() {
+                    return this.options && this.options[this.selectedIndex] ? this.options[this.selectedIndex].value : (this._val || '');
+                },
+                set value(v) {
+                    this._val = v;
+                    if (this.options) {
+                        const idx = this.options.findIndex(o => o.value === v);
+                        if (idx !== -1) this.selectedIndex = idx;
+                    }
+                },
+                appendChild(c) {
+                    this.children.push(c);
+                    if (this.options) this.options.push(c);
+                },
+                classList: {
+                    classes: new Set(),
+                    add(...cls) { cls.forEach(c => this.classes.add(c)); },
+                    remove(...cls) { cls.forEach(c => this.classes.delete(c)); },
+                    toggle(cls) { if (this.classes.has(cls)) this.classes.delete(cls); else this.classes.add(cls); }
+                },
+                style: {},
+                setAttribute() { },
+                addEventListener() { },
+                querySelector() { return makeEl('sub'); },
+                querySelectorAll() { return []; },
+                getBoundingClientRect() { return { width: 500, height: 200, left: 0, top: 0 }; },
+                textContent: '',
+                get innerHTML() { return this._html || ''; },
+                set innerHTML(val) {
+                    this._html = val;
+                    if (val === '') {
+                        this.children = [];
+                        this.options = [];
+                        this.selectedIndex = 0;
+                    }
+                }
+            };
+        }
+        return {
+            getElementById(id) {
+                if (!elements.has(id)) elements.set(id, makeEl(id));
+                return elements.get(id);
+            },
+            createElement(tag) { return makeEl(tag); },
+            createElementNS(ns, tag) { return makeEl(tag); },
+            elements
+        };
+    }
+
+    const script = html.slice(html.indexOf('>', html.indexOf('<script nonce=')) + 1, html.lastIndexOf('</script>'));
+    const doc = makeActivityDomMock();
+    const sandbox = {
+        acquireVsCodeApi: () => ({ postMessage() { } }),
+        window: { addEventListener() { }, onresize: null },
+        document: doc,
+        console
+    };
+    const ctx = vm.createContext(sandbox);
+    vm.runInContext(script, ctx);
+
+    // Verify DOM element population
+    const repliesEl = doc.getElementById('actAssistantReplies');
+    check('actAssistantReplies populated in DOM', repliesEl && repliesEl.textContent !== '0');
+    const filesReadEl = doc.getElementById('actFilesRead');
+    check('actFilesRead element exists in DOM', Boolean(filesReadEl));
+    const commandsEl = doc.getElementById('actCommands');
+    check('actCommands element exists in DOM', Boolean(commandsEl));
+    const imagesEl = doc.getElementById('actImages');
+    check('actImages element exists in DOM', Boolean(imagesEl));
+
+    // Test files drawer toggle
+    const drawerEl = doc.getElementById('actFilesDrawer');
+    drawerEl.classList.add('hidden'); // matches initial HTML
+    check('actFilesDrawer is hidden initially', drawerEl && drawerEl.classList.classes.has('hidden'));
+    vm.runInContext('toggleActivityFiles()', ctx);
+    check('actFilesDrawer is visible after toggle', drawerEl && !drawerEl.classList.classes.has('hidden'));
+    check('activityFilesOpen state is true', vm.runInContext('activityFilesOpen', ctx) === true);
+    vm.runInContext('toggleActivityFiles()', ctx);
+    check('actFilesDrawer is hidden after second toggle', drawerEl && drawerEl.classList.classes.has('hidden'));
+
+    // Test chart loading overlay & states
+    check('dashboard html contains chartLoadingOverlay', html.includes('id="chartLoadingOverlay"'));
+    check('dashboard html contains chartEmptyState', html.includes('id="chartEmptyState"'));
+
+    const overlayEl = doc.getElementById('chartLoadingOverlay');
+    overlayEl.classList.add('hidden'); // matches initial HTML
+    const pointsCountEl = doc.getElementById('chartPointsCount');
+    vm.runInContext('isLoadingTimeline = true; renderChart([]);', ctx);
+    check('chartLoadingOverlay visible during timeline load', overlayEl && !overlayEl.classList.classes.has('hidden'));
+    check('chartPointsCount shows loading badge', pointsCountEl && pointsCountEl.textContent.includes('Loading'));
+
+    const mockPoint = [{ turn: 1, input: 1000, cached: 500, fresh: 500, output: 50, thinking: 0 }];
+    vm.runInContext('isLoadingTimeline = false;', ctx);
+    vm.runInContext(`renderChart(${JSON.stringify(mockPoint)}, true);`, ctx);
+    check('chartLoadingOverlay hidden after timeline loads', overlayEl && overlayEl.classList.classes.has('hidden'));
+    check('chartPointsCount displays point count', pointsCountEl && pointsCountEl.textContent.includes('1 point'));
+}
+
 // ---------------------------------------------------------------------------
 testSynthetic();
 testRealData();
@@ -1430,6 +1608,7 @@ testChartLayerIntegrity();
 testChangelogExtraction();
 testAntigravityIdeSupport();
 testAntigravityCliSupport();
+testSessionOperationsAndActivity();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
