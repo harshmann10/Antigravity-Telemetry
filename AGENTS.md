@@ -82,6 +82,8 @@ Every row here has caused a real bug in production — keep these rules in mind:
 | **Deleting catalog row first** | Locked DB leaves orphaned files with no catalog entry | Verify `existsSync` first, delete row last |
 | **Matching workspaces by folder name**| Renamed folder shows 0 chats; short name matches all | Match by normalized path prefix |
 | **Backticks in dashboard template** | Node.js `SyntaxError` halts entire extension | Use plain text or string escapes |
+| **Checking `isRunning` before host check** | Background CLI jobs hijack editor active chat | Prioritize `runningHost > runningCli > idleHost > idleCli` |
+| **Discarding foreign CLI rows in backend** | "All Workspaces" view hides non-matching CLI runs | Ingest all roots; scope only in view getters |
 
 ---
 

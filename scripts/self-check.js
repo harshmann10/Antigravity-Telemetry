@@ -82,11 +82,31 @@ function buildRow(model, fresh, cached, output, thinking, response, contextToken
 }
 
 function resolveSqlite() {
-    const candidates = [
-        'C:\\Users\\Harsh\\adb-fastboot\\platform-tools\\sqlite3.exe',
-        'sqlite3',
-        'sqlite3.exe'
-    ];
+    const candidates = ['sqlite3', 'sqlite3.exe'];
+    if (process.platform === 'win32') {
+        const localAppData = process.env.LOCALAPPDATA || '';
+        const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+        const userProfile = process.env.USERPROFILE || '';
+        if (localAppData) {
+            candidates.push(
+                path.join(localAppData, 'Programs', 'sqlite3', 'sqlite3.exe'),
+                path.join(localAppData, 'Microsoft', 'WindowsApps', 'sqlite3.exe')
+            );
+        }
+        if (userProfile) {
+            candidates.push(path.join(userProfile, 'scoop', 'shims', 'sqlite3.exe'));
+        }
+        candidates.push(
+            'C:\\ProgramData\\chocolatey\\bin\\sqlite3.exe',
+            path.join(programFiles, 'sqlite', 'sqlite3.exe')
+        );
+    } else {
+        candidates.push(
+            '/usr/bin/sqlite3',
+            '/usr/local/bin/sqlite3',
+            '/opt/homebrew/bin/sqlite3'
+        );
+    }
     for (const c of candidates) {
         try {
             execSync(`"${c}" --version`, { stdio: 'ignore' });
@@ -1369,12 +1389,15 @@ function testAntigravityCliSupport() {
         if (wroteFake) { try { fs.unlinkSync(cliConvPath); } catch {} }
     }
 
-    // selectActiveConversation priorities: Running CLI > Idle Host Editor > Idle CLI
+    // selectActiveConversation priorities: Running Host > Running CLI > Idle Host Editor > Idle CLI
     const idleHost = { id: 'host-1', isSubagent: false, source: 'extension', isRunning: false };
     const idleCli = { id: 'cli-1', isSubagent: false, source: 'cli', isRunning: false };
     const runningCli = { id: 'cli-running', isSubagent: false, source: 'cli', isRunning: true };
+    const runningHost = { id: 'host-running', isSubagent: false, source: 'extension', isRunning: true };
     const subagent = { id: 'sub-1', isSubagent: true, source: 'cli', isRunning: true };
 
+    check('selectActiveConversation prioritizes running host over running CLI',
+        reader.selectActiveConversation([runningCli, runningHost]).id === 'host-running');
     check('selectActiveConversation prioritizes running CLI over idle host',
         reader.selectActiveConversation([idleHost, runningCli]).id === 'cli-running');
     check('selectActiveConversation prioritizes idle host editor over idle CLI',
@@ -1488,6 +1511,10 @@ function testSessionOperationsAndActivity() {
     check('dashboard html contains activityCard', html.includes('id="activityCard"'));
     check('dashboard html contains actToggleFilesBtn', html.includes('id="actToggleFilesBtn"'));
     check('dashboard html contains actFilesDrawer', html.includes('id="actFilesDrawer"'));
+    check('dashboard html contains extVersionBadge', html.includes('id="extVersionBadge"'));
+    check('dashboard html displays extension version', html.includes('>v1.2.0<'));
+    const customVerHtml = getDashboardHtml([], '', { version: '9.9.9' });
+    check('dashboard html accepts custom dynamic version', customVerHtml.includes('>v9.9.9<'));
 
     function makeActivityDomMock() {
         const elements = new Map();
@@ -1639,6 +1666,10 @@ function testSessionOperationsAndActivity() {
     vm.runInContext('renderDrawerFiles("nonexistent-test-path-xyz")', ctx);
     const readListEl = doc.getElementById('actDrawerReadList');
     check('renderDrawerFiles handles filtering correctly', Boolean(readListEl));
+
+    // Dropdown optgroup separation & source badge tests
+    check('dashboard html contains optgroup grouping', html.includes("appendGroup('Editor Sessions'") && html.includes("appendGroup('CLI Terminal Runs'"));
+    check('dashboard html contains source badge check', html.includes("c.source === 'cli' || c.source === 'ide' || hasMultipleSources"));
 }
 
 // ---------------------------------------------------------------------------

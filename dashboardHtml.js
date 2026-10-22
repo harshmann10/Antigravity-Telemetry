@@ -7,8 +7,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     iconUri = '',
     nonce = '',
     cspSource = '',
-    deleteToRecycleBin = true
+    deleteToRecycleBin = true,
+    version = ''
   } = options;
+  const extVersion = version || (() => { try { return require('./package.json').version; } catch (_) { return '1.2.0'; } })() || '1.2.0';
 
   // Wording follows the actual delete behaviour so the modal never claims something irreversible
   // when files are going to the Recycle Bin.
@@ -77,6 +79,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <div>
             <div class="flex items-center gap-2">
               <h1 class="text-sm font-semibold tracking-tight text-[var(--vscode-editor-foreground,#f4f4f5)]">Antigravity Telemetry</h1>
+              <span id="extVersionBadge" class="px-1.5 py-0.2 rounded text-[10px] font-mono font-medium muted-color inner-bg border border-color" title="Antigravity Telemetry v${extVersion}">v${extVersion}</span>
               <span class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span> Live
               </span>
@@ -1101,7 +1104,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           displayList.unshift(selConv);
         }
       }
-      displayList.forEach(c => {
+      function createOption(c) {
         const opt = document.createElement('option');
         opt.value = c.id;
         const isAct = c.id === currentActiveId ? ' (ACTIVE)' : '';
@@ -1133,13 +1136,32 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           titleText = t;
         }
 
-        const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
-        const srcPrefix = hasMultipleSources && c.source ? (c.source === 'cli' ? '[CLI] ' : (c.source === 'ide' ? '[IDE] ' : '[Ext] ')) : '';
+        const srcPrefix = c.source ? (c.source === 'cli' ? '[CLI] ' : (c.source === 'ide' ? '[IDE] ' : '[Ext] ')) : '';
         opt.textContent = srcPrefix + wsPrefix + titleText + isAct + ' · ' + tokM + ' (' + hit + ' cache)';
         opt.title = srcPrefix + (wsPrefix ? wsPrefix : '') + fullTitle + isAct + ' — ' + (c.storageMB ? c.storageMB + 'MB · ' : '') + tokM + ' tok (' + (c.stats ? c.stats.cacheHitRate : 0) + '% cache)';
         if (c.id === selectedId) opt.selected = true;
-        select.appendChild(opt);
-      });
+        return opt;
+      }
+
+      const editorConvs = displayList.filter(c => c.source !== 'cli');
+      const cliConvs = displayList.filter(c => c.source === 'cli');
+
+      function appendGroup(label, convs) {
+        if (convs.length === 0) return;
+        const group = document.createElement('optgroup');
+        group.label = label;
+        convs.forEach(c => group.appendChild(createOption(c)));
+        select.appendChild(group);
+      }
+
+      if (cliConvs.length > 0 && editorConvs.length > 0) {
+        appendGroup('Editor Sessions', editorConvs);
+        appendGroup('CLI Terminal Runs', cliConvs);
+      } else if (cliConvs.length > 0) {
+        appendGroup('CLI Terminal Runs', cliConvs);
+      } else {
+        editorConvs.forEach(c => select.appendChild(createOption(c)));
+      }
       if (selectedId) {
         select.value = selectedId;
         const cur = CONVERSATIONS.find(c => c.id === selectedId);
@@ -1155,7 +1177,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     function selectConv(id) {
       selectedId = id;
       const conv = CONVERSATIONS.find(c => c.id === id);
-      const needsTimeline = Boolean(conv && conv.stats && (!conv.stats.contextTimeline || conv.stats.contextTimeline.length === 0) && conv.stats.calls > 0);
+      const needsTimeline = Boolean(conv && conv.stats && ((!conv.stats.contextTimeline || conv.stats.contextTimeline.length === 0) || !conv.stats.activity) && conv.stats.calls > 0);
       isLoadingTimeline = needsTimeline;
       try {
         vscode.postMessage({ command: 'selectConversation', conversationId: id });
@@ -1205,7 +1227,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           : '';
         const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
         let sourceBadge = '';
-        if (hasMultipleSources && c.source) {
+        if (c.source && (c.source === 'cli' || c.source === 'ide' || hasMultipleSources)) {
           if (c.source === 'cli') {
             sourceBadge = '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0" title="Source: Antigravity CLI"><svg class="w-2.5 h-2.5 text-emerald-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>CLI</span>';
           } else if (c.source === 'ide') {
@@ -1976,7 +1998,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       const srcBadge = document.getElementById('sourceBadgeDetail');
       const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
       if (srcBadge) {
-        if (hasMultipleSources && conv.source) {
+        if (conv.source && (conv.source === 'cli' || conv.source === 'ide' || hasMultipleSources)) {
           srcBadge.classList.remove('hidden');
           if (conv.source === 'cli') {
             srcBadge.innerHTML = '<svg class="w-2.5 h-2.5 text-emerald-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg><span>CLI</span>';
@@ -2122,8 +2144,55 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
       const healthMeterEl = document.getElementById('contextHealthMeter');
       const healthBadgeEl = document.getElementById('contextHealthStatusBadge');
+      const isBreakdownLoading = Boolean(isLoadingTimeline || (s.calls > 0 && ((!s.contextTimeline || s.contextTimeline.length === 0) || !s.activity)));
 
-      const usedNum = parseFloat(usedPct) || 0;
+      if (isBreakdownLoading) {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Analyzing...';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30 animate-pulse';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-zinc-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900/60 rounded-full overflow-hidden flex border border-color/80 relative transition-all duration-300 opacity-60 animate-pulse';
+          healthMeterEl.title = 'Analyzing context allocation...';
+        }
+
+        const segPrompts = document.getElementById('segPrompts');
+        if (segPrompts) segPrompts.style.width = '0%';
+        const segReplies = document.getElementById('segReplies');
+        if (segReplies) segReplies.style.width = '0%';
+        const segFiles = document.getElementById('segFiles');
+        if (segFiles) segFiles.style.width = '0%';
+        const segCommands = document.getElementById('segCommands');
+        if (segCommands) segCommands.style.width = '0%';
+        const segImages = document.getElementById('segImages');
+        if (segImages) segImages.style.width = '0%';
+        const segFree = document.getElementById('segFree');
+        if (segFree) segFree.style.width = '0%';
+
+        const segPromptsVal = document.getElementById('segPromptsVal');
+        if (segPromptsVal) segPromptsVal.textContent = '...';
+        const segRepliesVal = document.getElementById('segRepliesVal');
+        if (segRepliesVal) segRepliesVal.textContent = '...';
+        const segFilesVal = document.getElementById('segFilesVal');
+        if (segFilesVal) segFilesVal.textContent = '...';
+        const segCommandsVal = document.getElementById('segCommandsVal');
+        if (segCommandsVal) segCommandsVal.textContent = '...';
+        const segImagesVal = document.getElementById('segImagesVal');
+        if (segImagesVal) segImagesVal.textContent = '...';
+        const segFreeVal = document.getElementById('segFreeVal');
+        if (segFreeVal) segFreeVal.textContent = freePct + '%';
+
+        const actRepliesFootprint = document.getElementById('actRepliesFootprint');
+        if (actRepliesFootprint) actRepliesFootprint.textContent = 'Analyzing...';
+        const actFilesFootprint = document.getElementById('actFilesFootprint');
+        if (actFilesFootprint) actFilesFootprint.textContent = 'Analyzing...';
+        const actCommandsFootprint = document.getElementById('actCommandsFootprint');
+        if (actCommandsFootprint) actCommandsFootprint.textContent = 'Analyzing...';
+        const actImagesFootprint = document.getElementById('actImagesFootprint');
+        if (actImagesFootprint) actImagesFootprint.textContent = 'Analyzing...';
+      } else {
+        const usedNum = parseFloat(usedPct) || 0;
       if (usedNum >= 85) {
         if (healthBadgeEl) {
           healthBadgeEl.textContent = 'Compaction Alert';
@@ -2159,8 +2228,9 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       // Proportional Token Component Footprints
       let imgTok = (act.analyzedImages || 0) * 1600;
       let cmdTok = (act.executedCommands || 0) * 250;
-      let repliesTok = (s.lastTurn ? s.lastTurn.output : s.avgOutput) || (act.assistantResponses * 300) || 0;
-      let promptsTok = (act.userPrompts || 0) * 200;
+      const effectivePrompts = Math.max(1, act.userPrompts || 0);
+      let promptsTok = effectivePrompts * (s.avgInput ? Math.min(2000, Math.round(s.avgInput * 0.25)) : 300);
+      let repliesTok = (s.lastTurn ? s.lastTurn.output : s.avgOutput) || (act.assistantResponses * 300) || Math.round(usedTokens * 0.35);
       let filesTok = 0;
 
       if (usedTokens > 0) {
@@ -2263,6 +2333,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       if (actCommandsFootprint) actCommandsFootprint.textContent = '~' + formatTok(cmdTok) + ' tok (' + cmdCtxPct + '%)';
       const actImagesFootprint = document.getElementById('actImagesFootprint');
       if (actImagesFootprint) actImagesFootprint.textContent = '~' + formatTok(imgTok) + ' tok (' + imgCtxPct + '%)';
+
+      }
 
       // Populate file lists in drawer with search filter & badges
       renderDrawerFiles(fileFilterQuery);
@@ -2744,6 +2816,20 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     populateDropdown();
     filterList();
     updateGlobalHeaders();
+
+    const initConv = CONVERSATIONS.find(c => c.id === selectedId) || CONVERSATIONS[0];
+    const needsInitData = Boolean(
+      initConv && initConv.stats && 
+      ((!initConv.stats.contextTimeline || initConv.stats.contextTimeline.length === 0) || !initConv.stats.activity) && 
+      initConv.stats.calls > 0
+    );
+    if (needsInitData) {
+      isLoadingTimeline = true;
+      try {
+        vscode.postMessage({ command: 'getTimeline', conversationId: selectedId });
+      } catch {}
+    }
+
     renderDetail();
     window.onresize = () => {
       const conv = CONVERSATIONS.find(c => c.id === selectedId);

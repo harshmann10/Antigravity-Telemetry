@@ -31,8 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 💻 Antigravity CLI Discovery & Multi-Root Parity
 - **Native CLI Storage Discovery**: Automatically detects and reads active sessions, transcripts, and SQLite stores from `~/.gemini/antigravity-cli`.
-- **Flexible Data Source Routing**: Choose between `auto` (prioritizes active CLI sessions over idle editors), `cli`, `ide`, `extension`, or merged `all` mode.
-- **Session Identification & Multi-Root Badges**: Displays clear `CLI`, `IDE`, and `Ext` source badges across the UI with timestamp deduplication.
+- **Intelligent 4-Tier Session Priority**: Implemented anti-hijacking hierarchy (`runningHost > runningCli > idleHost > idleCli`) guaranteeing background terminal jobs never displace active VS Code / IDE focus mid-session.
+- **Dropdown `<optgroup>` Segmentation**: Session selector dynamically categorizes entries into `Editor Sessions` and `CLI Terminal Runs` when multiple sources exist.
+- **Seamless All Workspaces Parity**: Switching to "All Workspaces" now aggregates both host and CLI runs across all projects without premature backend pruning.
+- **Permanent Origin Badges**: Visual `CLI`, `IDE`, and `Ext` badges remain permanently visible across the UI, even when viewing filtered or single-source views.
+- **Flexible Data Source Routing**: Choose between `auto`, `cli`, `ide`, `extension`, or merged `all` mode.
 
 #### 🤖 Nested Subagent Collapse Controls
 - **Node-Level Collapse/Expand**: Individual chevron controls on subagents that spawn child workers, preventing UI clutter in deep delegation workflows.

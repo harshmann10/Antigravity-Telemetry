@@ -30,6 +30,23 @@ The extension unifies telemetry across three distinct Antigravity environments:
 
 ---
 
+### Active Conversation Selection Algorithm (`selectActiveConversation`)
+To determine which session drives the status bar and default webview detail view when multiple environments or background workers are present:
+1. **`runningHost`**: A running human conversation originating from the host editor (`source !== 'cli' && isRunning && !isSubagent`). Always holds absolute top priority.
+2. **`runningCli`**: A running human conversation originating from the CLI (`source === 'cli' && isRunning && !isSubagent`). Surfaced only when the host editor is idle.
+3. **`hostChat`**: The most recently modified idle conversation from the host editor (`source !== 'cli' && !isSubagent`). Prevents idle background terminal tasks from taking over editor focus.
+4. **Fallback**: Any non-subagent conversation, then the first entry in the list.
+
+### Workspace Scoping & Filtering Architecture
+1. **Zero Backend Pruning**: `readAllTelemetry()` ingests and catalogs all conversations from all active roots without discarding foreign workspace entries. This guarantees that global views have complete state.
+2. **Extension Host Scoping**: `getVisibleConversations()` in `extension.js` filters `telemetryState.conversations` against `getCurrentWorkspaceFolders()` using `conversationMatchesWorkspace()` to drive the status bar and QuickPick.
+3. **Webview Interactive Scoping**: `getWorkspaceFilteredConversations()` in `dashboardHtml.js` dynamically applies `currentWorkspaceFilter`:
+   - `'current'`: Filters conversations by normalized path prefix matching the active VS Code workspace.
+   - `'all'`: Returns the full `CONVERSATIONS` array across all workspaces and roots (both Editor and CLI).
+   - `'ws:<name>'`: Filters to a specific named workspace.
+
+---
+
 ## 2. Zero-Residue Deletion & The "Ghost Chat" Problem
 
 ### The "Ghost Chat" Incomplete Deletion Finding

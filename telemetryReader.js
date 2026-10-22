@@ -261,11 +261,37 @@ function getSqliteBinary() {
   if (cachedSqlitePath) return cachedSqlitePath;
   const candidates = [];
   if (customSqlitePath) candidates.push(customSqlitePath);
-  candidates.push(
-    'C:\\Users\\Harsh\\adb-fastboot\\platform-tools\\sqlite3.exe',
-    'sqlite3',
-    'sqlite3.exe'
-  );
+  // 1. System PATH lookup (default on Windows, macOS, Linux)
+  candidates.push('sqlite3', 'sqlite3.exe');
+
+  // 2. OS-specific common binary locations
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || '';
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+    const userProfile = process.env.USERPROFILE || '';
+    if (localAppData) {
+      candidates.push(
+        path.join(localAppData, 'Programs', 'sqlite3', 'sqlite3.exe'),
+        path.join(localAppData, 'Microsoft', 'WindowsApps', 'sqlite3.exe')
+      );
+    }
+    if (userProfile) {
+      candidates.push(path.join(userProfile, 'scoop', 'shims', 'sqlite3.exe'));
+    }
+    candidates.push(
+      'C:\\ProgramData\\chocolatey\\bin\\sqlite3.exe',
+      path.join(programFiles, 'sqlite', 'sqlite3.exe'),
+      path.join(systemRoot, 'System32', 'sqlite3.exe')
+    );
+  } else {
+    candidates.push(
+      '/usr/bin/sqlite3',
+      '/usr/local/bin/sqlite3',
+      '/opt/homebrew/bin/sqlite3',
+      '/usr/pkg/bin/sqlite3'
+    );
+  }
   for (const c of candidates) {
     try {
       execSync(`"${c}" --version`, { stdio: 'ignore' });
@@ -1706,11 +1732,14 @@ function withLatestTimeline(stats) {
 }
 
 // Picks the conversation the footer should describe.
-// 1. Prefers a human chat that is actively running (e.g. running CLI agent or active editor chat)
-// 2. Prefers a human host editor chat over an idle CLI chat (prevents background terminal chats from overriding VS Code)
-// 3. Falls back to any non-subagent, then the first entry
+// 1. Running editor/IDE chat always takes top priority
+// 2. Running CLI agent comes second
+// 3. Most recent idle editor/IDE chat
+// 4. Any other non-subagent, then fallback to first
 function selectActiveConversation(conversations) {
   if (!conversations || conversations.length === 0) return null;
+  const runningHost = conversations.find(c => !c.isSubagent && c.isRunning && c.source !== 'cli');
+  if (runningHost) return runningHost;
   const running = conversations.find(c => !c.isSubagent && c.isRunning);
   if (running) return running;
   const hostChat = conversations.find(c => !c.isSubagent && c.source !== 'cli');
@@ -1961,15 +1990,6 @@ function readAllTelemetry(options = {}) {
       stats: withLatestTimeline(stats)
     };
 
-    // Filter CLI sessions in auto mode: only surface if matches workspace or is actively running
-    if (isAuto && root.id === 'cli') {
-      const isRunning = Boolean(convItem.isRunning);
-      const hasWs = options && Array.isArray(options.currentWorkspaceFolders) && options.currentWorkspaceFolders.length > 0;
-      const matchesWs = !hasWs || conversationMatchesWorkspace(convItem, options.currentWorkspaceFolders);
-      if (!isRunning && !matchesWs) {
-        continue;
-      }
-    }
 
     convStatsList.push(convItem);
   }

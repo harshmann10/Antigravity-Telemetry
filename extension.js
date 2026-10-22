@@ -728,6 +728,8 @@ function openDashboard(selectedConvId) {
   const iconUri = mediaRoot ? currentPanel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'icon.png')).toString() : '';
   const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
+  const pkgVersion = (extensionContext && extensionContext.extension && extensionContext.extension.packageJSON ? extensionContext.extension.packageJSON.version : '') || require('./package.json').version || '1.2.0';
+
   currentPanel.webview.html = getDashboardHtml(
     prepareConversationsForWebview(telemetryState.conversations, targetId),
     targetId,
@@ -735,6 +737,7 @@ function openDashboard(selectedConvId) {
       cssUri,
       iconUri,
       nonce,
+      version: pkgVersion,
       cspSource: currentPanel.webview.cspSource,
       deleteToRecycleBin: getConfig().deleteToRecycleBin,
       workspaceFilter: getConfig().workspaceFilter,

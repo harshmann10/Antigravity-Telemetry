@@ -3,6 +3,33 @@
 Technical and architectural notes for Antigravity Telemetry, grouped by development and review phases.
 For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 
+## 2026-10-22 — Phase 9: Multi-Tier Active Selection, All Workspaces Parity & Dropdown Optgroups
+
+**Task 1 — Active Session Anti-Hijacking Hierarchy**
+- Solved the active session race condition in `telemetryReader.js`:
+  - When background CLI jobs (`agy`) or long-running subagents ran concurrently, `selectActiveConversation()` matched `c.isRunning` before checking `c.source !== 'cli'`, prematurely flipping the VS Code status bar and webview focus mid-session.
+  - Implemented a strict 4-tier selection order:
+    1. `runningHost`: Running chat in VS Code extension or Antigravity IDE (top priority).
+    2. `runningCli`: Running chat in Antigravity CLI (second priority, only when editor chat is idle).
+    3. `hostChat`: Most recent idle editor/IDE chat (prevents background idle CLI runs from superseding the editor).
+    4. Fallback: Any non-subagent, then the first entry.
+
+**Task 2 — Dual-Stage Workspace Scoping & All Workspaces Parity**
+- Eliminated upstream CLI pruning in `telemetryReader.js`:
+  - Previously, `readAllTelemetry()` discarded non-matching CLI sessions with `continue;` during the SQLite load in `auto` mode. As a result, switching the webview workspace dropdown to "All Workspaces" hid foreign CLI sessions.
+  - Resolved by retaining all conversations in the backend `CONVERSATIONS` array and relying on dual-stage view-level scoping:
+    - Status bar and QuickPick scope via `getVisibleConversations()` in `extension.js`.
+    - Webview dropdown and list scope via `getWorkspaceFilteredConversations()` in `dashboardHtml.js`.
+  - "All Workspaces" now accurately aggregates all sessions across all workspaces and roots.
+
+**Task 3 — Dropdown Optgroup Segmentation & Persistent Origin Badges**
+- Refactored `populateDropdown()` in `dashboardHtml.js`:
+  - Dynamically groups sessions into `<optgroup label="Editor Sessions">` and `<optgroup label="CLI Terminal Runs">` when multiple sources are detected, preventing one-off terminal runs from cluttering the primary chat selector.
+  - Removed the `hasMultipleSources.size > 1` gate from `cli` and `ide` badges in both the session list and detail view, ensuring origin provenance is permanently visible even in isolated views.
+
+**Task 4 — Verification Suite Expansion (285 tests)**
+- Added unit and integration tests to Section 13 and Section 14 in `scripts/self-check.js` covering `runningHost > runningCli` priority, `<optgroup>` rendering, and persistent source badge visibility. All 285 tests pass with 0 failures.
+
 ## 2026-10-20 — Phase 8: Context Health & Intelligence Hub (CLI `/context` Issue #3)
 
 **Task 1 — Hero Context Health Diagnostic Bar & Live Capacity Meter**

@@ -139,6 +139,9 @@ Antigravity Telemetry provides true, verified cleanup:
 - **Unified All Mode**: Set `antigravity.dataSource: "all"` anytime to view sessions from all environments merged side-by-side with clear `IDE`, `Ext`, and `CLI` visual badges and timestamp deduplication.
 - **Antigravity IDE Catalog Integration (`state.vscdb`)**: Decodes session summaries directly from Antigravity IDE's state database (`%APPDATA%\Antigravity IDE\User\globalStorage\state.vscdb`), resolving titles, step counts, timestamps, and workspace mappings.
 - **In-DB Self-Description Fallback**: In-flight or newly opened sessions in Antigravity IDE are automatically self-described using internal `trajectory_metadata_blob` and `steps` tables, ensuring live sessions are recognized immediately and never falsely marked as ghost chats.
+- **Intelligent 4-Tier Selection Priority**: Anti-hijacking hierarchy guarantees active VS Code / IDE chats are never superseded by background terminal commands, while active CLI tasks are immediately surfaced if the editor is idle.
+- **Dropdown `<optgroup>` Organization**: Dynamically separates sessions into `Editor Sessions` and `CLI Terminal Runs` when multiple sources exist.
+- **Full "All Workspaces" Parity**: Switching to *All Workspaces* seamlessly surfaces both host and CLI runs across all projects without premature filtering.
 - **Workspace Scoping**: Automatically resolves each conversation's `workspace_uris` to real paths and scopes the status bar, history picker, and dashboard to your currently active project folder (supports case-insensitive path prefix matching).
 - **Instant Startup & Caching**: Serializes analysis state to isolated local extension storage (`globalStorageUri`) on reload. Warm restart reads take **~50 ms** (~98% faster than cold scanning), and periodic heartbeats run in **~6 ms** with **0 bytes of network traffic** over Remote SSH.
 
