@@ -7,8 +7,10 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     iconUri = '',
     nonce = '',
     cspSource = '',
-    deleteToRecycleBin = true
+    deleteToRecycleBin = true,
+    version = ''
   } = options;
+  const extVersion = version || (() => { try { return require('./package.json').version; } catch (_) { return '1.2.0'; } })() || '1.2.0';
 
   // Wording follows the actual delete behaviour so the modal never claims something irreversible
   // when files are going to the Recycle Bin.
@@ -77,6 +79,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           <div>
             <div class="flex items-center gap-2">
               <h1 class="text-sm font-semibold tracking-tight text-[var(--vscode-editor-foreground,#f4f4f5)]">Antigravity Telemetry</h1>
+              <span id="extVersionBadge" class="px-1.5 py-0.2 rounded text-[10px] font-mono font-medium muted-color inner-bg border border-color" title="Antigravity Telemetry v${extVersion}">v${extVersion}</span>
               <span class="inline-flex items-center px-1.5 py-0.2 rounded text-[10px] font-medium bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 mr-1 animate-pulse"></span> Live
               </span>
@@ -301,6 +304,22 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         <div id="chartContainer" class="h-44 w-full inner-bg border border-color rounded-lg relative overflow-hidden flex items-center justify-center select-none">
           <svg id="timelineSvg" class="w-full h-full" style="display: block;"></svg>
 
+          <!-- Chart Loading Overlay -->
+          <div id="chartLoadingOverlay" class="absolute inset-0 bg-black/50 backdrop-blur-[2px] flex flex-col items-center justify-center gap-2 z-20 hidden select-none pointer-events-none transition-opacity duration-150">
+            <div class="flex items-center gap-2 px-3 py-1.5 rounded-lg inner-bg border border-color shadow-xl">
+              <svg class="w-4 h-4 text-blue-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span id="chartLoadingText" class="text-xs font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">Loading turn timeline...</span>
+            </div>
+          </div>
+
+          <!-- Chart Empty State -->
+          <div id="chartEmptyState" class="absolute inset-0 hidden flex items-center justify-center text-xs muted-color italic pointer-events-none select-none">
+            No turns recorded yet
+          </div>
+
           <!-- Floating Inspection Tooltip -->
           <div id="chartTooltip" class="absolute hidden pointer-events-none p-2.5 inner-bg border border-color rounded-lg shadow-xl text-xs z-30 transition-all duration-75">
             <div class="flex items-center justify-between gap-3 border-b border-color pb-1 mb-1.5">
@@ -335,106 +354,264 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         </div>
       </div>
 
-      <!-- SESSION INTELLIGENCE & METRICS GRID (REPLACING OLD COST SECTION) -->
-      <div class="p-3 card-bg border border-color rounded-xl space-y-2.5">
-        <div class="flex items-center justify-between">
-          <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Session Intelligence & Turn Metrics</h3>
-          <span class="text-[10px] muted-color">Live execution telemetry</span>
+      <!-- CONTEXT HEALTH & CODEBASE IMPACT (CLI /context Experience & Activity) -->
+      <div id="activityCard" class="p-3 card-bg border border-color rounded-xl space-y-3">
+        <!-- Top Bar: Title & Controls -->
+        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-color pb-2.5">
+          <div class="flex items-center gap-2">
+            <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+            <div>
+              <div class="flex items-center gap-2">
+                <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Context Health & Codebase Impact</h3>
+                <span id="contextHealthStatusBadge" class="px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Healthy</span>
+              </div>
+              <p class="text-[10px] muted-color">Live context allocation, token headroom & codebase operations</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <!-- Files Drawer Toggle -->
+            <button id="actToggleFilesBtn" class="flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-semibold inner-bg border border-color hover:border-blue-500/40 text-[var(--vscode-editor-foreground,#f4f4f5)] hover:text-blue-300 transition-colors shadow-sm select-none" title="Toggle list of files read in memory and modified">
+              <svg class="w-3.5 h-3.5 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              <span>Files Touched (<span id="actFilesBadgeCount">0</span>)</span>
+              <span id="actFilesChevron" class="text-[9px] text-zinc-400 transition-transform">▼</span>
+            </button>
+          </div>
         </div>
 
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 text-xs">
-          
-          <!-- Card 1: Last Turn Activity -->
+        <!-- Hero Context Health Diagnostic Bar -->
+        <div class="p-2.5 inner-bg rounded-lg border border-color space-y-2">
+          <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <span class="text-xs font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">Health Diagnostic:</span>
+              <span id="contextHealthPct" class="font-mono font-bold text-emerald-400">0.0%</span>
+              <span class="muted-color">in use of</span>
+              <span id="contextHealthCeiling" class="font-mono font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">256k</span>
+            </div>
+            <div class="text-[11px] font-mono muted-color flex items-center gap-2">
+              <span><strong id="contextHealthUsed" class="text-[var(--vscode-editor-foreground,#f4f4f5)]">0</strong> tok used</span>
+              <span>·</span>
+              <span><strong id="contextHealthFree" class="text-emerald-400">256,000</strong> tok headroom remaining</span>
+            </div>
+          </div>
+
+          <!-- Unified Segmented Context Allocation Bar -->
+          <div id="contextHealthMeter" class="h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-color/80 relative transition-all duration-300" title="Context Allocation">
+            <div id="segPrompts" class="h-full bg-blue-500 transition-all duration-300" style="width: 0%" title="User Prompts"></div>
+            <div id="segReplies" class="h-full bg-purple-500 transition-all duration-300" style="width: 0%" title="Assistant Output"></div>
+            <div id="segFiles" class="h-full bg-cyan-400 transition-all duration-300" style="width: 0%" title="Codebase Files"></div>
+            <div id="segCommands" class="h-full bg-emerald-400 transition-all duration-300" style="width: 0%" title="Tool & Command Outputs"></div>
+            <div id="segImages" class="h-full bg-amber-400 transition-all duration-300" style="width: 0%" title="Analyzed Images"></div>
+            <div id="segFree" class="h-full bg-zinc-800/60 transition-all duration-300" style="width: 100%" title="Free Headroom"></div>
+          </div>
+
+          <!-- Allocation Bar Micro-Legend (3-column responsive grid) -->
+          <div class="grid grid-cols-3 sm:grid-cols-6 gap-x-2 gap-y-1 text-[10px] muted-color pt-0.5">
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-blue-500 shrink-0"></span>
+              <span class="truncate">Prompts: <strong id="segPromptsVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-purple-500 shrink-0"></span>
+              <span class="truncate">Replies: <strong id="segRepliesVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-cyan-400 shrink-0"></span>
+              <span class="truncate">Files: <strong id="segFilesVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+              <span class="truncate">Cmds: <strong id="segCommandsVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span>
+              <span class="truncate">Images: <strong id="segImagesVal" class="text-[var(--vscode-editor-foreground,#f4f4f5)] font-mono">0%</strong></span>
+            </div>
+            <div class="flex items-center gap-1 min-w-0 truncate">
+              <span class="w-2 h-2 rounded-full bg-zinc-600 shrink-0"></span>
+              <span class="truncate">Headroom: <strong id="segFreeVal" class="text-emerald-400 font-mono">100%</strong></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4 Unified Activity & Footprint Metrics Cards -->
+        <div id="contextCardsGrid" class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+          <!-- Metric 1: Assistant Responses -->
           <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
             <div class="flex items-center justify-between text-[10px] muted-color">
               <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+                Responses
+              </span>
+              <span id="actRepliesFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-blue-300">~0 tok</span>
+            </div>
+            <div id="actAssistantReplies" class="text-base font-bold text-blue-400">0</div>
+            <div id="actUserPromptsSub" class="text-[10px] muted-color truncate" title="User prompts and autonomy ratio">0 prompts · 0.0 turns/prompt</div>
+          </div>
+
+          <!-- Metric 2: Codebase Files -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-cyan-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                Files In Memory
+              </span>
+              <span id="actFilesFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-cyan-300">~0 tok</span>
+            </div>
+            <div id="actFilesRead" class="text-base font-bold text-cyan-400">0</div>
+            <div id="actFilesModifiedSub" class="text-[10px] muted-color truncate" title="Files modified or created">0 modified / created</div>
+          </div>
+
+          <!-- Metric 3: Executed Commands -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2z"/></svg>
+                Commands
+              </span>
+              <span id="actCommandsFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-emerald-300">~0 tok</span>
+            </div>
+            <div id="actCommands" class="text-base font-bold text-emerald-400">0</div>
+            <div id="actTotalToolsSub" class="text-[10px] muted-color truncate" title="Total tool actions completed">0 total tool actions</div>
+          </div>
+
+          <!-- Metric 4: Visual & Web Operations -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                Images
+              </span>
+              <span id="actImagesFootprint" class="text-[9px] px-1 py-0.2 rounded font-mono inner-bg border border-color text-amber-300">~0 tok</span>
+            </div>
+            <div id="actImages" class="text-base font-bold text-amber-400">0</div>
+            <div id="actSubagentsWebSub" class="text-[10px] muted-color truncate" title="Multimodal visual captures processed">0 captures processed</div>
+          </div>
+        </div>
+
+        <!-- Collapsible Files Inspector Drawer -->
+        <div id="actFilesDrawer" class="hidden inner-bg border border-color rounded-lg p-3 space-y-2.5">
+          <div class="flex items-center justify-between gap-2 border-b border-color pb-2">
+            <div class="flex items-center gap-1.5 text-xs font-semibold text-[var(--vscode-editor-foreground,#f4f4f5)]">
+              <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              <span>In-Memory & Modified Codebase Files</span>
+            </div>
+            <input id="actFileFilterInput" type="text" placeholder="Filter paths..." 
+              class="px-2 py-0.5 text-[10px] inner-bg border border-color rounded text-[var(--vscode-editor-foreground,#f4f4f5)] placeholder-[var(--vscode-input-placeholderForeground,#71717a)] focus:outline-none focus:border-blue-500 w-44" />
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <!-- Files Read in Memory -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between text-[11px] font-semibold border-b border-color pb-1 text-cyan-300">
+                <span class="flex items-center gap-1">
+                  <svg class="w-3 h-3 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                  Files Read in Memory
+                </span>
+                <span id="actDrawerReadCount" class="px-1.5 py-0.2 rounded text-[10px] inner-bg border border-color text-zinc-300 font-mono">0</span>
+              </div>
+              <div id="actDrawerReadList" class="max-h-56 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
+                <div class="muted-color italic text-[11px]">No files read</div>
+              </div>
+            </div>
+
+            <!-- Files Modified or Created -->
+            <div class="space-y-1.5">
+              <div class="flex items-center justify-between text-[11px] font-semibold border-b border-color pb-1 text-emerald-300">
+                <span class="flex items-center gap-1">
+                  <svg class="w-3 h-3 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                  Files Modified / Created
+                </span>
+                <span id="actDrawerModCount" class="px-1.5 py-0.2 rounded text-[10px] inner-bg border border-color text-zinc-300 font-mono">0</span>
+              </div>
+              <div id="actDrawerModList" class="max-h-56 overflow-y-auto custom-scrollbar space-y-1 pr-1 text-[11px] font-mono text-zinc-300">
+                <div class="muted-color italic text-[11px]">No files modified</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- STREAMLINED TURN & CACHE INTELLIGENCE -->
+      <div id="intelligenceCard" class="p-3 card-bg border border-color rounded-xl space-y-2.5">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-[var(--vscode-editor-foreground,#f4f4f5)]">Turn & Cache Intelligence</h3>
+          <span class="text-[10px] muted-color">Operational telemetry & execution dynamics</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+          
+          <!-- Card 1: Last Turn Execution & Compaction -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
                 <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                Last Turn
+                Last Turn Execution
               </span>
               <span id="metaLastTurnNum" class="font-semibold text-blue-400">Turn #--</span>
             </div>
-            <div id="metaLastContext" class="text-sm font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</div>
-            <div class="text-[10px] space-y-0.5">
+            <div class="flex items-baseline justify-between gap-2">
+              <div id="metaLastContext" class="text-base font-bold text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</div>
+              <div id="metaLastCompaction" class="text-[10px] font-semibold text-emerald-400">Normal</div>
+            </div>
+            <div class="text-[10px] space-y-0.5 border-t border-color/60 pt-1">
               <div class="flex justify-between">
-                <span class="muted-color">Uncached Input:</span>
+                <span class="muted-color">Fresh Uncached Input:</span>
                 <span id="metaLastFresh" class="font-medium text-cyan-400">+0 fresh</span>
               </div>
               <div class="flex justify-between">
                 <span class="muted-color">Model Output:</span>
                 <span id="metaLastOutput" class="font-medium text-purple-400">0 tok</span>
               </div>
+            </div>
+          </div>
+
+          <!-- Card 2: Trajectory Dynamics & Net Growth -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+                Trajectory Dynamics
+              </span>
+              <span id="metaTrajectoryNetPill" class="text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30">+0 tok net</span>
+            </div>
+            <div class="flex items-baseline justify-between gap-2">
+              <div id="metaPeakContext" class="text-base font-bold text-amber-400">0 tok peak</div>
+              <div class="text-[10px] muted-color font-mono">Min: <span id="metaMinContext" class="text-blue-300">0</span></div>
+            </div>
+            <div class="text-[10px] space-y-0.5 border-t border-color/60 pt-1">
               <div class="flex justify-between">
-                <span class="muted-color">Compaction:</span>
-                <span id="metaLastCompaction" class="font-medium text-emerald-400">Normal</span>
+                <span class="muted-color">Average per Turn:</span>
+                <span id="metaAvgContext" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="muted-color">Compaction Events:</span>
+                <span id="metaCompactions" class="font-medium text-zinc-300">0 events</span>
               </div>
             </div>
           </div>
 
-          <!-- Card 2: Per-Turn Averages -->
-          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
-              <svg class="w-3 h-3 text-amber-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-              <span>Per-Turn Averages</span>
+          <!-- Card 3: Prompt Cache Acceleration -->
+          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1.5">
+            <div class="flex items-center justify-between text-[10px] muted-color">
+              <span class="flex items-center gap-1 font-semibold uppercase tracking-wider">
+                <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                Cache Acceleration
+              </span>
+              <span id="metaCacheSpeedupPill" class="text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">~1.0x</span>
             </div>
-            <div id="metaAvgContext" class="text-sm font-bold text-amber-400">0 tok</div>
-            <div class="text-[10px] space-y-0.5">
-              <div class="flex justify-between">
-                <span class="muted-color">Avg Output:</span>
-                <span id="metaAvgOutput" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Avg Thinking:</span>
-                <span id="metaAvgThinking" class="font-medium text-purple-400">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Avg Cached:</span>
-                <span id="metaAvgCached" class="font-medium text-emerald-400">0 tok</span>
-              </div>
+            <div class="flex items-baseline justify-between gap-2">
+              <div id="metaCacheCalls" class="text-base font-bold text-emerald-400">0 / 0 Hits</div>
+              <div id="metaCeilingLimit" class="text-[10px] font-mono text-red-400">256k limit</div>
             </div>
-          </div>
-
-          <!-- Card 3: Cache Reliability & Ceiling -->
-          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
-              <svg class="w-3 h-3 text-blue-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-              <span>Cache Performance</span>
-            </div>
-            <div id="metaCacheCalls" class="text-sm font-bold text-blue-400">0 Hits</div>
-            <div class="text-[10px] space-y-0.5">
+            <div class="text-[10px] space-y-0.5 border-t border-color/60 pt-1">
               <div class="flex justify-between">
                 <span class="muted-color">Cold Starts:</span>
                 <span id="metaCacheMisses" class="font-medium text-amber-400">0 misses</span>
               </div>
               <div class="flex justify-between">
-                <span class="muted-color">Compactions:</span>
-                <span id="metaCompactions" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 events</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Ceiling Limit:</span>
-                <span id="metaCeilingLimit" class="font-medium text-red-400 font-mono">256k limit</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- Card 4: Session Peaks -->
-          <div class="p-2.5 inner-bg rounded-lg border border-color space-y-1">
-            <div class="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider muted-color">
-              <svg class="w-3 h-3 text-emerald-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
-              <span>Session Peaks</span>
-            </div>
-            <div id="metaPeakContext" class="text-sm font-bold text-emerald-400">0 tok</div>
-            <div class="text-[10px] space-y-0.5">
-              <div class="flex justify-between">
-                <span class="muted-color">Peak Output:</span>
-                <span id="metaPeakOutput" class="font-medium text-[var(--vscode-editor-foreground,#f4f4f5)]">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Peak Thinking:</span>
-                <span id="metaPeakThinking" class="font-medium text-purple-400">0 tok</span>
-              </div>
-              <div class="flex justify-between">
-                <span class="muted-color">Min Context:</span>
-                <span id="metaMinContext" class="font-medium text-blue-300">0 tok</span>
+                <span class="muted-color">Volume Served:</span>
+                <span id="metaAvgCached" class="font-medium text-emerald-400">0 tok avg</span>
               </div>
             </div>
           </div>
@@ -513,10 +690,14 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     let currentTimeline = [];
     let pendingDeleteId = null;
     let expandedDrawers = new Set();
+    let collapsedSubagents = new Set();
     let unattachedExpanded = false;
     let subagentsCardCollapsed = false;
+    let activityFilesOpen = false;
+    let isLoadingTimeline = false;
     let isRefreshing = false;
     let refreshTimeout = null;
+    let fileFilterQuery = '';
 
     window.addEventListener('message', event => {
       const msg = event.data;
@@ -537,16 +718,28 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         const target = CONVERSATIONS.find(c => c.id === msg.conversationId);
         if (target && target.stats) {
           target.stats.contextTimeline = msg.timeline || [];
+          if (msg.activity) {
+            target.stats.activity = msg.activity;
+          }
         }
         if (selectedId === msg.conversationId) {
+          isLoadingTimeline = false;
           currentTimeline = msg.timeline || [];
           renderChart(currentTimeline);
+          renderDetail();
         }
       } else if (msg && msg.type === 'telemetryUpdate') {
         const oldTimelines = new Map();
+        const oldActivities = new Map();
         for (const c of CONVERSATIONS) {
           if (c.stats && c.stats.contextTimeline && c.stats.contextTimeline.length > 0) {
             oldTimelines.set(c.id, c.stats.contextTimeline);
+          }
+          if (c.stats && c.stats.activity && (
+            (c.stats.activity.filesRead && c.stats.activity.filesRead.length > 0) ||
+            (c.stats.activity.filesModified && c.stats.activity.filesModified.length > 0)
+          )) {
+            oldActivities.set(c.id, c.stats.activity);
           }
         }
         CONVERSATIONS = msg.data;
@@ -554,6 +747,17 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           if ((!c.stats || !c.stats.contextTimeline || c.stats.contextTimeline.length === 0) && oldTimelines.has(c.id)) {
             if (!c.stats) c.stats = {};
             c.stats.contextTimeline = oldTimelines.get(c.id);
+          }
+          if (oldActivities.has(c.id)) {
+            const oldAct = oldActivities.get(c.id);
+            if (c.stats && c.stats.activity) {
+              if ((!c.stats.activity.filesRead || c.stats.activity.filesRead.length === 0) && oldAct.filesRead && oldAct.filesRead.length > 0) {
+                c.stats.activity.filesRead = oldAct.filesRead;
+              }
+              if ((!c.stats.activity.filesModified || c.stats.activity.filesModified.length === 0) && oldAct.filesModified && oldAct.filesModified.length > 0) {
+                c.stats.activity.filesModified = oldAct.filesModified;
+              }
+            }
           }
         }
         if (msg.activeId) {
@@ -900,7 +1104,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           displayList.unshift(selConv);
         }
       }
-      displayList.forEach(c => {
+      function createOption(c) {
         const opt = document.createElement('option');
         opt.value = c.id;
         const isAct = c.id === currentActiveId ? ' (ACTIVE)' : '';
@@ -932,13 +1136,32 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           titleText = t;
         }
 
-        const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
-        const srcPrefix = hasMultipleSources && c.source ? (c.source === 'ide' ? '[IDE] ' : '[Ext] ') : '';
+        const srcPrefix = c.source ? (c.source === 'cli' ? '[CLI] ' : (c.source === 'ide' ? '[IDE] ' : '[Ext] ')) : '';
         opt.textContent = srcPrefix + wsPrefix + titleText + isAct + ' · ' + tokM + ' (' + hit + ' cache)';
         opt.title = srcPrefix + (wsPrefix ? wsPrefix : '') + fullTitle + isAct + ' — ' + (c.storageMB ? c.storageMB + 'MB · ' : '') + tokM + ' tok (' + (c.stats ? c.stats.cacheHitRate : 0) + '% cache)';
         if (c.id === selectedId) opt.selected = true;
-        select.appendChild(opt);
-      });
+        return opt;
+      }
+
+      const editorConvs = displayList.filter(c => c.source !== 'cli');
+      const cliConvs = displayList.filter(c => c.source === 'cli');
+
+      function appendGroup(label, convs) {
+        if (convs.length === 0) return;
+        const group = document.createElement('optgroup');
+        group.label = label;
+        convs.forEach(c => group.appendChild(createOption(c)));
+        select.appendChild(group);
+      }
+
+      if (cliConvs.length > 0 && editorConvs.length > 0) {
+        appendGroup('Editor Sessions', editorConvs);
+        appendGroup('CLI Terminal Runs', cliConvs);
+      } else if (cliConvs.length > 0) {
+        appendGroup('CLI Terminal Runs', cliConvs);
+      } else {
+        editorConvs.forEach(c => select.appendChild(createOption(c)));
+      }
       if (selectedId) {
         select.value = selectedId;
         const cur = CONVERSATIONS.find(c => c.id === selectedId);
@@ -953,10 +1176,12 @@ function getDashboardHtml(conversations, activeId, options = {}) {
 
     function selectConv(id) {
       selectedId = id;
+      const conv = CONVERSATIONS.find(c => c.id === id);
+      const needsTimeline = Boolean(conv && conv.stats && ((!conv.stats.contextTimeline || conv.stats.contextTimeline.length === 0) || !conv.stats.activity) && conv.stats.calls > 0);
+      isLoadingTimeline = needsTimeline;
       try {
         vscode.postMessage({ command: 'selectConversation', conversationId: id });
-        const conv = CONVERSATIONS.find(c => c.id === id);
-        if (conv && conv.stats && (!conv.stats.contextTimeline || conv.stats.contextTimeline.length === 0) && conv.stats.calls > 0) {
+        if (needsTimeline) {
           vscode.postMessage({ command: 'getTimeline', conversationId: id });
         }
       } catch {}
@@ -982,7 +1207,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         return;
       }
 
-      function createConvRow(c) {
+      function createConvRow(c, collapseOpts = null) {
         const isSel = c.id === selectedId;
         const isAct = c.id === currentActiveId;
         const div = document.createElement('div');
@@ -1000,12 +1225,30 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         const wsBadge = wsName && currentWorkspaceFilter === 'all'
           ? '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 shrink-0" title="Workspace: ' + escapeHtml(wsName) + '"><svg class="w-2.5 h-2.5 text-indigo-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>' + escapeHtml(wsName) + '</span>'
           : '';
-        const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
-        const sourceBadge = hasMultipleSources && c.source
-          ? (c.source === 'ide'
-              ? '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0" title="Source: Antigravity IDE"><svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>IDE</span>'
-              : '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0" title="Source: Antigravity Extension"><svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>Ext</span>')
-          : '';
+        const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
+        let sourceBadge = '';
+        if (c.source && (c.source === 'cli' || c.source === 'ide' || hasMultipleSources)) {
+          if (c.source === 'cli') {
+            sourceBadge = '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 shrink-0" title="Source: Antigravity CLI"><svg class="w-2.5 h-2.5 text-emerald-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>CLI</span>';
+          } else if (c.source === 'ide') {
+            sourceBadge = '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 shrink-0" title="Source: Antigravity IDE"><svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>IDE</span>';
+          } else {
+            sourceBadge = '<span class="inline-flex items-center gap-1 text-[9px] font-medium px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 shrink-0" title="Source: Antigravity Extension"><svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>Ext</span>';
+          }
+        }
+
+        let leftChevronHtml = '';
+        let collapsePillHtml = '';
+        if (collapseOpts && collapseOpts.hasChildren) {
+          const arrow = collapseOpts.isCollapsed ? '▸' : '▾';
+          leftChevronHtml = '<span class="sub-toggle-arrow-left text-[11px] text-purple-300 font-bold select-none cursor-pointer hover:text-purple-200 shrink-0 mr-0.5" title="' + (collapseOpts.isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' + arrow + '</span>';
+          const cnt = collapseOpts.count || 0;
+          collapsePillHtml = 
+            '<button class="sub-toggle-pill flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-medium border bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25 cursor-pointer shrink-0" title="' + (collapseOpts.isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' +
+              '<span class="sub-toggle-arrow text-[10px]">' + arrow + '</span>' +
+              '<span>' + cnt + ' subagent' + (cnt > 1 ? 's' : '') + '</span>' +
+            '</button>';
+        }
 
         let titleHtml = '';
         if (c.isSubagent) {
@@ -1016,10 +1259,14 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           if (displayTitle.length > 38) {
             displayTitle = displayTitle.slice(0, 36).trim() + '…';
           }
+          const parentConv = c.parentConversationId ? CONVERSATIONS.find(x => x.id === c.parentConversationId) : null;
+          const parentTooltip = parentConv && parentConv.isSubagent ? ' (Subagent of ' + (parentConv.agentName || parentConv.title || 'subagent') + ')' : '';
+          const fullTooltip = cleanTitle ? (cleanTitle + parentTooltip) : '';
           const taskSpan = displayTitle
-            ? '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(cleanTitle) + '">' + escapeHtml(displayTitle) + '</span>'
+            ? '<span class="font-medium text-xs truncate min-w-0 ' + (isSel ? 'text-blue-300 font-semibold' : 'text-[var(--vscode-editor-foreground,#f4f4f5)]') + '" title="' + escapeHtml(fullTooltip) + '">' + escapeHtml(displayTitle) + '</span>'
             : '';
           titleHtml = 
+            leftChevronHtml +
             '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + agentLabel + '</span>' +
             taskSpan;
         } else {
@@ -1035,12 +1282,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             '</div>' +
             '<div class="flex items-center gap-1.5 shrink-0">' +
               (isAct ? '<span class="text-[9px] font-bold px-1 rounded bg-emerald-500/20 text-emerald-400">ACTIVE</span>' : '') +
+              collapsePillHtml +
               '<span class="text-[10px] font-bold px-1.5 py-0.5 rounded ' + (hitRate > 90 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400') + '">' + hitRate + '%</span>' +
               '<button class="del-btn p-1 rounded hover:bg-red-500/20 text-zinc-400 hover:text-red-400 transition-colors" title="${delTooltip}"><svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg></button>' +
             '</div>' +
           '</div>' +
           '<div class="flex items-center justify-between text-[10px] muted-color">' +
-            '<span>' + (c.stats ? c.stats.calls : 0) + ' calls · ' + c.stepCount + ' steps</span>' +
+            '<span>' + (c.stats ? c.stats.calls : 0) + ' calls · ' + c.stepCount + ' steps' + (c.stats && c.stats.activity && c.stats.activity.totalToolCalls > 0 ? ' · ' + c.stats.activity.totalToolCalls + ' tools' : '') + '</span>' +
             '<div class="flex items-center gap-2 font-mono font-medium">' +
               '<span class="text-zinc-400">' + storageMB + '</span>' +
               '<span>' + totalM + 'M tok</span>' +
@@ -1053,6 +1301,23 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             e.stopPropagation();
             openDeleteModal(c.id);
           };
+        }
+
+        if (collapseOpts && collapseOpts.hasChildren && collapseOpts.onToggle) {
+          const pill = div.querySelector('.sub-toggle-pill');
+          if (pill) {
+            pill.onclick = (e) => {
+              e.stopPropagation();
+              collapseOpts.onToggle();
+            };
+          }
+          const leftArr = div.querySelector('.sub-toggle-arrow-left');
+          if (leftArr) {
+            leftArr.onclick = (e) => {
+              e.stopPropagation();
+              collapseOpts.onToggle();
+            };
+          }
         }
         return div;
       }
@@ -1089,17 +1354,49 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       const humanChats = wsList.filter(c => !c.isSubagent);
       const allSubagents = wsList.filter(c => c.isSubagent);
 
-      const parentToChildren = new Map();
-      const unattached = [];
+      const convById = new Map(CONVERSATIONS.map(c => [c.id, c]));
 
+      // Map direct children for every conversation
+      const childrenMap = new Map();
       allSubagents.forEach(s => {
         const pId = s.parentConversationId;
-        if (pId && humanChats.some(h => h.id === pId)) {
-          if (!parentToChildren.has(pId)) parentToChildren.set(pId, []);
-          parentToChildren.get(pId).push(s);
-        } else {
-          unattached.push(s);
+        if (pId) {
+          if (!childrenMap.has(pId)) childrenMap.set(pId, []);
+          childrenMap.get(pId).push(s);
         }
+      });
+
+      // Find root ancestor for any conversation
+      function getRootConversation(conv) {
+        let curr = conv;
+        const visited = new Set();
+        while (curr && curr.parentConversationId && !visited.has(curr.id)) {
+          visited.add(curr.id);
+          const parent = convById.get(curr.parentConversationId);
+          if (!parent) break;
+          curr = parent;
+          if (!curr.isSubagent) {
+            return curr;
+          }
+        }
+        return curr;
+      }
+
+      // Collect all descendant subagents recursively
+      function getAllDescendants(parentId) {
+        const descendants = [];
+        const direct = childrenMap.get(parentId) || [];
+        for (const child of direct) {
+          descendants.push(child);
+          descendants.push(...getAllDescendants(child.id));
+        }
+        return descendants;
+      }
+
+      // Unattached subagents: subagents whose root ancestor is NOT in humanChats
+      const unattached = allSubagents.filter(s => {
+        const root = getRootConversation(s);
+        return !root || root.isSubagent || !humanChats.some(h => h.id === root.id);
       });
 
       // Handle search filtering
@@ -1109,16 +1406,18 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       if (q) {
         visibleHumans = humanChats.filter(h => {
           const hMatch = (h.title || '').toLowerCase().includes(q) || (h.id || '').toLowerCase().includes(q);
-          const children = parentToChildren.get(h.id) || [];
-          const cMatch = children.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
+          const allDesc = getAllDescendants(h.id);
+          const cMatch = allDesc.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
           if (cMatch) expandedDrawers.add(h.id);
           return hMatch || cMatch;
         });
 
         visibleUnattached = unattached.filter(u => {
           const uMatch = (u.agentName || '').toLowerCase().includes(q) || (u.agentRole || '').toLowerCase().includes(q) || (u.title || '').toLowerCase().includes(q) || (u.id || '').toLowerCase().includes(q);
-          if (uMatch) unattachedExpanded = true;
-          return uMatch;
+          const uDesc = getAllDescendants(u.id);
+          const udMatch = uDesc.some(c => (c.agentName || '').toLowerCase().includes(q) || (c.agentRole || '').toLowerCase().includes(q) || (c.title || '').toLowerCase().includes(q) || (c.id || '').toLowerCase().includes(q));
+          if (uMatch || udMatch) unattachedExpanded = true;
+          return uMatch || udMatch;
         });
       }
 
@@ -1127,14 +1426,74 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         return;
       }
 
+      function renderSubagentTree(subList, treeContainer) {
+        subList.forEach(ch => {
+          const allNested = getAllDescendants(ch.id);
+          const hasChildren = allNested.length > 0;
+          let collapseOpts = null;
+          let nestedDiv = null;
+
+          if (hasChildren) {
+            if (q) {
+              const anyChildMatches = allNested.some(c => 
+                (c.agentName || '').toLowerCase().includes(q) || 
+                (c.agentRole || '').toLowerCase().includes(q) || 
+                (c.title || '').toLowerCase().includes(q) || 
+                (c.id || '').toLowerCase().includes(q)
+              );
+              if (anyChildMatches) {
+                collapsedSubagents.delete(ch.id);
+              }
+            }
+            const isCollapsed = collapsedSubagents.has(ch.id);
+            collapseOpts = {
+              hasChildren: true,
+              count: allNested.length,
+              isCollapsed: isCollapsed,
+              onToggle: () => {
+                if (collapsedSubagents.has(ch.id)) {
+                  collapsedSubagents.delete(ch.id);
+                } else {
+                  collapsedSubagents.add(ch.id);
+                }
+                const nowCollapsed = collapsedSubagents.has(ch.id);
+                if (nestedDiv) nestedDiv.classList.toggle('hidden', nowCollapsed);
+                const leftArrow = childRow.querySelector('.sub-toggle-arrow-left');
+                if (leftArrow) {
+                  leftArrow.textContent = nowCollapsed ? '▸' : '▾';
+                  leftArrow.title = nowCollapsed ? 'Show child subagents' : 'Hide child subagents';
+                }
+                const pillArrow = childRow.querySelector('.sub-toggle-arrow');
+                if (pillArrow) pillArrow.textContent = nowCollapsed ? '▸' : '▾';
+                const pill = childRow.querySelector('.sub-toggle-pill');
+                if (pill) pill.title = nowCollapsed ? 'Show child subagents' : 'Hide child subagents';
+              }
+            };
+          }
+
+          const childRow = createConvRow(ch, collapseOpts);
+          treeContainer.appendChild(childRow);
+
+          const nested = childrenMap.get(ch.id) || [];
+          if (nested.length > 0) {
+            const isCollapsed = collapsedSubagents.has(ch.id);
+            nestedDiv = document.createElement('div');
+            nestedDiv.className = 'space-y-1.5 ml-4 my-1 border-l-2 border-purple-500/25 pl-2.5' + (isCollapsed ? ' hidden' : '');
+            renderSubagentTree(nested, nestedDiv);
+            treeContainer.appendChild(nestedDiv);
+          }
+        });
+      }
+
       visibleHumans.forEach(h => {
         const row = createConvRow(h, false);
         container.appendChild(row);
 
-        const children = parentToChildren.get(h.id) || [];
-        if (children.length > 0) {
-          const cTok = children.reduce((sum, ch) => sum + (ch.stats ? ch.stats.grandTotal : 0), 0);
-          const cStorage = children.reduce((sum, ch) => sum + (parseFloat(ch.storageMB) || 0), 0).toFixed(1);
+        const directChildren = childrenMap.get(h.id) || [];
+        const allDescendants = getAllDescendants(h.id);
+        if (allDescendants.length > 0) {
+          const cTok = allDescendants.reduce((sum, ch) => sum + (ch.stats ? ch.stats.grandTotal : 0), 0);
+          const cStorage = allDescendants.reduce((sum, ch) => sum + (parseFloat(ch.storageMB) || 0), 0).toFixed(1);
           const isExp = expandedDrawers.has(h.id);
 
           const drawerWrap = document.createElement('div');
@@ -1146,7 +1505,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
             '<div class="flex items-center gap-1.5 text-purple-300 font-medium">' +
               '<span class="drawer-arrow text-[11px]">' + (isExp ? '▾' : '▸') + '</span>' +
               '<span class="inline-flex items-center gap-1 text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/25 text-purple-300 border border-purple-500/30"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>subagents</span>' +
-              '<span>' + children.length + ' subagent' + (children.length > 1 ? 's' : '') + '</span>' +
+              '<span>' + allDescendants.length + ' subagent' + (allDescendants.length > 1 ? 's' : '') + '</span>' +
               '<span class="muted-color font-mono">· ' + formatTok(cTok) + ' tok · ' + cStorage + ' MB</span>' +
             '</div>' +
             '<span class="text-[10px] muted-color">' + (isExp ? 'Hide' : 'Show') + '</span>';
@@ -1154,10 +1513,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           const childListDiv = document.createElement('div');
           childListDiv.className = 'space-y-1.5 ml-5 mt-1 border-l-2 border-purple-500/30 pl-2.5 ' + (isExp ? '' : 'hidden');
 
-          children.forEach(ch => {
-            const childRow = createConvRow(ch, true, null);
-            childListDiv.appendChild(childRow);
-          });
+          renderSubagentTree(directChildren, childListDiv);
 
           toggle.onclick = (e) => {
             e.stopPropagation();
@@ -1201,10 +1557,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         const unListDiv = document.createElement('div');
         unListDiv.className = 'space-y-1.5 ml-3 mt-1 border-l-2 border-amber-500/30 pl-2.5 ' + (unattachedExpanded ? '' : 'hidden');
 
-        visibleUnattached.forEach(ch => {
-          const uRow = createConvRow(ch, true);
-          unListDiv.appendChild(uRow);
-        });
+        const unattachedTopLevel = visibleUnattached.filter(u => !u.parentConversationId || !visibleUnattached.some(other => other.id === u.parentConversationId));
+        renderSubagentTree(unattachedTopLevel, unListDiv);
 
         unToggle.onclick = (e) => {
           e.stopPropagation();
@@ -1303,6 +1657,110 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           selectedId = next.id;
         }
       }
+      expandedDrawers.delete(idToDelete);
+      collapsedSubagents.delete(idToDelete);
+    }
+
+    function getFileExtension(path) {
+      if (!path) return '';
+      const base = path.split(/[\\/]/).pop() || '';
+      const parts = base.split('.');
+      if (parts.length > 1) {
+        return parts.pop().toLowerCase();
+      }
+      return '';
+    }
+
+    function getFileBadgeClass(ext) {
+      switch (ext) {
+        case 'js':
+        case 'mjs':
+        case 'cjs':
+          return 'bg-yellow-500/15 text-yellow-300 border-yellow-500/30';
+        case 'ts':
+        case 'tsx':
+        case 'jsx':
+          return 'bg-blue-500/15 text-blue-300 border-blue-500/30';
+        case 'py':
+          return 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30';
+        case 'json':
+          return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+        case 'md':
+        case 'txt':
+          return 'bg-zinc-500/15 text-zinc-300 border-zinc-500/30';
+        case 'html':
+        case 'css':
+        case 'scss':
+          return 'bg-pink-500/15 text-pink-300 border-pink-500/30';
+        case 'sql':
+        case 'db':
+          return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+        default:
+          return 'bg-purple-500/15 text-purple-300 border-purple-500/30';
+      }
+    }
+
+    function createFileItemHtml(filePath, isModified = false) {
+      const base = escapeHtml(filePath.split(/[\\/]/).pop() || filePath);
+      const ext = getFileExtension(filePath);
+      const badgeCls = getFileBadgeClass(ext);
+      const extBadge = ext ? ('<span class="text-[9px] px-1 py-0.2 rounded font-mono font-semibold uppercase border shrink-0 ' + badgeCls + '">' + escapeHtml(ext) + '</span>') : '';
+      const nameCls = isModified ? 'text-emerald-300 font-semibold' : 'text-zinc-200';
+      const borderHover = isModified ? 'hover:border-emerald-500/40' : 'hover:border-cyan-500/40';
+
+      return '<div class="truncate p-1.5 inner-bg rounded-md border border-color ' + borderHover + ' flex items-center justify-between gap-1.5 transition-colors" title="' + escapeHtml(filePath) + '">' +
+        '<div class="flex items-center gap-1.5 min-w-0 flex-1 truncate">' +
+          extBadge +
+          '<span class="truncate ' + nameCls + '">' + base + '</span>' +
+        '</div>' +
+        '<span class="text-[9px] muted-color font-sans shrink-0 truncate max-w-[45%] text-right">' + escapeHtml(filePath) + '</span>' +
+      '</div>';
+    }
+
+    function renderDrawerFiles(query = '') {
+      const conv = CONVERSATIONS.find(c => c.id === selectedId) || CONVERSATIONS[0];
+      const act = (conv && conv.stats && conv.stats.activity) || {};
+      const q = (query || '').toLowerCase().trim();
+
+      const readListEl = document.getElementById('actDrawerReadList');
+      const readCountEl = document.getElementById('actDrawerReadCount');
+      const allRead = Array.isArray(act.filesRead) ? act.filesRead : [];
+      const filteredRead = q ? allRead.filter(f => f.toLowerCase().includes(q)) : allRead;
+
+      if (readCountEl) {
+        readCountEl.textContent = q ? (filteredRead.length + ' / ' + (act.filesReadCount || allRead.length)) : (act.filesReadCount || allRead.length);
+      }
+      if (readListEl) {
+        if (filteredRead.length > 0) {
+          readListEl.innerHTML = filteredRead.map(f => createFileItemHtml(f, false)).join('');
+        } else if (allRead.length > 0 && q) {
+          readListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No matching files for "' + escapeHtml(q) + '"</div>';
+        } else if (act.filesReadCount > 0) {
+          readListEl.innerHTML = '<div class="text-cyan-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesReadCount + ' files in memory...</span></div>';
+        } else {
+          readListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No files read in memory</div>';
+        }
+      }
+
+      const modListEl = document.getElementById('actDrawerModList');
+      const modCountEl = document.getElementById('actDrawerModCount');
+      const allMod = Array.isArray(act.filesModified) ? act.filesModified : [];
+      const filteredMod = q ? allMod.filter(f => f.toLowerCase().includes(q)) : allMod;
+
+      if (modCountEl) {
+        modCountEl.textContent = q ? (filteredMod.length + ' / ' + (act.filesModifiedCount || allMod.length)) : (act.filesModifiedCount || allMod.length);
+      }
+      if (modListEl) {
+        if (filteredMod.length > 0) {
+          modListEl.innerHTML = filteredMod.map(f => createFileItemHtml(f, true)).join('');
+        } else if (allMod.length > 0 && q) {
+          modListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No matching files for "' + escapeHtml(q) + '"</div>';
+        } else if (act.filesModifiedCount > 0) {
+          modListEl.innerHTML = '<div class="text-emerald-400 text-[11px] p-2 flex items-center gap-1.5 font-sans"><svg class="w-3.5 h-3.5 text-emerald-400 animate-spin shrink-0" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg><span>Loading ' + act.filesModifiedCount + ' modified files...</span></div>';
+        } else {
+          modListEl.innerHTML = '<div class="muted-color italic text-[11px] p-2 text-center">No files modified or created</div>';
+        }
+      }
     }
 
     function renderDetail() {
@@ -1332,30 +1790,52 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           breadcrumb.classList.remove('hidden');
           breadcrumb.innerHTML = '';
 
-          const parentId = conv.parentConversationId;
-          const parentConv = parentId ? CONVERSATIONS.find(c => c.id === parentId) : null;
+          // Build ancestor chain
+          const ancestors = [];
+          let curr = conv;
+          const visited = new Set();
+          while (curr && curr.parentConversationId && !visited.has(curr.id)) {
+            visited.add(curr.id);
+            const p = CONVERSATIONS.find(c => c.id === curr.parentConversationId);
+            if (!p) {
+              if (curr.parentTitle) {
+                ancestors.unshift({ id: null, title: curr.parentTitle, missing: true });
+              }
+              break;
+            }
+            ancestors.unshift(p);
+            curr = p;
+          }
 
-          const prefix = document.createElement('span');
-          prefix.className = 'muted-color';
-          prefix.textContent = 'Subagent of: ';
-          breadcrumb.appendChild(prefix);
+          if (ancestors.length > 0) {
+            ancestors.forEach((anc, idx) => {
+              if (idx > 0) {
+                const sep = document.createElement('span');
+                sep.className = 'muted-color text-[11px]';
+                sep.textContent = ' → ';
+                breadcrumb.appendChild(sep);
+              }
+              if (anc.missing) {
+                const nameSpan = document.createElement('span');
+                nameSpan.className = 'text-zinc-300 font-medium';
+                nameSpan.textContent = anc.title;
+                breadcrumb.appendChild(nameSpan);
 
-          if (parentConv) {
-            const link = document.createElement('a');
-            link.className = 'text-blue-400 hover:underline cursor-pointer font-medium';
-            link.textContent = parentConv.title || 'Parent Chat';
-            link.onclick = () => selectConv(parentConv.id);
-            breadcrumb.appendChild(link);
-          } else if (conv.parentTitle) {
-            const nameSpan = document.createElement('span');
-            nameSpan.className = 'text-zinc-300 font-medium';
-            nameSpan.textContent = conv.parentTitle;
-            breadcrumb.appendChild(nameSpan);
-
-            const note = document.createElement('span');
-            note.className = 'text-[10px] muted-color';
-            note.textContent = ' (session data no longer on disk)';
-            breadcrumb.appendChild(note);
+                const note = document.createElement('span');
+                note.className = 'text-[10px] muted-color';
+                note.textContent = ' (session data no longer on disk)';
+                breadcrumb.appendChild(note);
+              } else {
+                const link = document.createElement('a');
+                link.className = 'text-blue-400 hover:underline cursor-pointer font-medium';
+                const label = anc.isSubagent 
+                  ? (anc.agentName ? '[' + anc.agentName + '] ' : '') + (anc.title || anc.agentRole || 'Subagent')
+                  : (anc.title || 'Parent Chat');
+                link.textContent = label;
+                link.onclick = () => selectConv(anc.id);
+                breadcrumb.appendChild(link);
+              }
+            });
           } else {
             const missing = document.createElement('span');
             missing.className = 'muted-color italic';
@@ -1371,49 +1851,126 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
 
       // Subagents & Background Workers Card
-      const children = CONVERSATIONS.filter(c => c.parentConversationId === conv.id);
+      function getDescendantsForConv(parentId) {
+        const desc = [];
+        const direct = CONVERSATIONS.filter(c => c.parentConversationId === parentId);
+        for (const ch of direct) {
+          desc.push(ch);
+          desc.push(...getDescendantsForConv(ch.id));
+        }
+        return desc;
+      }
+      const directChildren = CONVERSATIONS.filter(c => c.parentConversationId === conv.id);
+      const allDescendants = getDescendantsForConv(conv.id);
       const subCard = document.getElementById('subagentsCard');
       const subList = document.getElementById('subagentsList');
       const subCountBadge = document.getElementById('subagentsCountBadge');
       const subRolledUp = document.getElementById('subagentsRolledUpTotal');
 
-      if (children.length > 0) {
+      if (allDescendants.length > 0) {
         if (subCard) subCard.classList.remove('hidden');
-        if (subCountBadge) subCountBadge.textContent = children.length + (children.length === 1 ? ' subagent' : ' subagents');
+        if (subCountBadge) subCountBadge.textContent = allDescendants.length + (allDescendants.length === 1 ? ' subagent' : ' subagents');
 
         let childTok = 0;
         if (subList) {
           subList.innerHTML = '';
-          children.forEach(ch => {
-            const cTok = ch.stats ? ch.stats.grandTotal : 0;
-            childTok += cTok;
 
-            const row = document.createElement('div');
-            row.className = 'p-2 inner-bg border border-color rounded-lg flex items-center justify-between gap-2 hover:border-blue-500/40 cursor-pointer transition-colors';
-            row.onclick = () => selectConv(ch.id);
+          function renderDetailSubagentTree(subListItems, treeContainer) {
+            subListItems.forEach(ch => {
+              const cTok = ch.stats ? ch.stats.grandTotal : 0;
+              childTok += cTok;
 
-            const left = document.createElement('div');
-            left.className = 'flex items-center gap-2 min-w-0';
-            const hasTask = ch.title && ch.title !== '<original_task>' && ch.title !== 'Untitled Conversation' && ch.title !== 'Untitled' && ch.title.trim() !== ch.agentName;
-            let displayTask = hasTask ? ch.title.trim() : (ch.agentRole ? ch.agentRole.trim() : (ch.agentName || ch.id.slice(0, 8)));
-            if (displayTask.length > 36) displayTask = displayTask.slice(0, 34).trim() + '…';
-            left.innerHTML = 
-              '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
-              '<span class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)] font-medium truncate" title="' + escapeHtml(ch.title || '') + '">' + escapeHtml(displayTask) + '</span>' +
-              '<span class="text-[10px] muted-color font-mono shrink-0">(' + escapeHtml(ch.id.slice(0, 8)) + ')</span>';
+              const directSubs = CONVERSATIONS.filter(c => c.parentConversationId === ch.id);
+              const allChildSubs = getDescendantsForConv(ch.id);
+              const hasChildren = allChildSubs.length > 0;
+              const isCollapsed = collapsedSubagents.has(ch.id);
+              let nestedDiv = null;
 
-            const right = document.createElement('div');
-            right.className = 'flex items-center gap-2.5 shrink-0 text-xs font-mono';
-            right.innerHTML = 
-              '<span class="text-zinc-400 text-[11px]">' + (ch.storageMB || '0.0') + ' MB</span>' +
-              '<span class="text-emerald-400 font-semibold">' + formatTok(cTok) + ' tok</span>' +
-              '<span class="text-[10px] muted-color">(' + (ch.stats ? ch.stats.calls : 0) + ' calls)</span>' +
-              '<span class="text-blue-400 text-[11px]">Inspect →</span>';
+              const row = document.createElement('div');
+              row.className = 'p-2 inner-bg border border-color rounded-lg flex items-center justify-between gap-2 hover:border-blue-500/40 cursor-pointer transition-colors';
+              row.onclick = () => selectConv(ch.id);
 
-            row.appendChild(left);
-            row.appendChild(right);
-            subList.appendChild(row);
-          });
+              let leftChevronHtml = '';
+              let pillHtml = '';
+              if (hasChildren) {
+                const arrow = isCollapsed ? '▸' : '▾';
+                leftChevronHtml = '<span class="detail-sub-toggle-arrow text-[11px] text-purple-300 font-bold select-none cursor-pointer hover:text-purple-200 shrink-0 mr-0.5" title="' + (isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' + arrow + '</span>';
+                pillHtml = 
+                  '<button class="detail-sub-toggle-pill flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono font-medium border bg-purple-500/15 text-purple-300 border-purple-500/30 hover:bg-purple-500/25 cursor-pointer shrink-0" title="' + (isCollapsed ? 'Show child subagents' : 'Hide child subagents') + '">' +
+                    '<span class="detail-sub-arrow text-[10px]">' + arrow + '</span>' +
+                    '<span>' + allChildSubs.length + ' subagent' + (allChildSubs.length > 1 ? 's' : '') + '</span>' +
+                  '</button>';
+              }
+
+              const left = document.createElement('div');
+              left.className = 'flex items-center gap-2 min-w-0';
+              const hasTask = ch.title && ch.title !== '<original_task>' && ch.title !== 'Untitled Conversation' && ch.title !== 'Untitled' && ch.title.trim() !== ch.agentName;
+              let displayTask = hasTask ? ch.title.trim() : (ch.agentRole ? ch.agentRole.trim() : (ch.agentName || ch.id.slice(0, 8)));
+              if (displayTask.length > 36) displayTask = displayTask.slice(0, 34).trim() + '…';
+              left.innerHTML = 
+                leftChevronHtml +
+                '<span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30 shrink-0"><svg class="w-2.5 h-2.5 text-purple-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>' + escapeHtml(ch.agentName || 'subagent') + '</span>' +
+                '<span class="text-xs text-[var(--vscode-editor-foreground,#f4f4f5)] font-medium truncate" title="' + escapeHtml(ch.title || '') + '">' + escapeHtml(displayTask) + '</span>' +
+                '<span class="text-[10px] muted-color font-mono shrink-0">(' + escapeHtml(ch.id.slice(0, 8)) + ')</span>';
+
+              const right = document.createElement('div');
+              right.className = 'flex items-center gap-2.5 shrink-0 text-xs font-mono';
+              right.innerHTML = 
+                pillHtml +
+                '<span class="text-zinc-400 text-[11px]">' + (ch.storageMB || '0.0') + ' MB</span>' +
+                '<span class="text-emerald-400 font-semibold">' + formatTok(cTok) + ' tok</span>' +
+                '<span class="text-[10px] muted-color">(' + (ch.stats ? ch.stats.calls : 0) + ' calls)</span>' +
+                '<span class="text-blue-400 text-[11px]">Inspect →</span>';
+
+              if (hasChildren) {
+                const toggleChild = () => {
+                  if (collapsedSubagents.has(ch.id)) {
+                    collapsedSubagents.delete(ch.id);
+                  } else {
+                    collapsedSubagents.add(ch.id);
+                  }
+                  const nowCol = collapsedSubagents.has(ch.id);
+                  if (nestedDiv) nestedDiv.classList.toggle('hidden', nowCol);
+                  const arr = left.querySelector('.detail-sub-toggle-arrow');
+                  if (arr) {
+                    arr.textContent = nowCol ? '▸' : '▾';
+                    arr.title = nowCol ? 'Show child subagents' : 'Hide child subagents';
+                  }
+                  const pillArr = right.querySelector('.detail-sub-arrow');
+                  if (pillArr) pillArr.textContent = nowCol ? '▸' : '▾';
+                  const pillBtn = right.querySelector('.detail-sub-toggle-pill');
+                  if (pillBtn) pillBtn.title = nowCol ? 'Show child subagents' : 'Hide child subagents';
+                };
+                const pillBtn = right.querySelector('.detail-sub-toggle-pill');
+                if (pillBtn) {
+                  pillBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    toggleChild();
+                  };
+                }
+                const arrowEl = left.querySelector('.detail-sub-toggle-arrow');
+                if (arrowEl) {
+                  arrowEl.onclick = (e) => {
+                    e.stopPropagation();
+                    toggleChild();
+                  };
+                }
+              }
+
+              row.appendChild(left);
+              row.appendChild(right);
+              treeContainer.appendChild(row);
+
+              if (directSubs.length > 0) {
+                nestedDiv = document.createElement('div');
+                nestedDiv.className = 'space-y-1.5 ml-4 my-1 border-l-2 border-purple-500/25 pl-2.5' + (isCollapsed ? ' hidden' : '');
+                renderDetailSubagentTree(directSubs, nestedDiv);
+                treeContainer.appendChild(nestedDiv);
+              }
+            });
+          }
+
+          renderDetailSubagentTree(directChildren, subList);
         }
 
         const parentTok = s.grandTotal || 0;
@@ -1439,18 +1996,23 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
 
       const srcBadge = document.getElementById('sourceBadgeDetail');
-      const hasMultipleSources = CONVERSATIONS.some(x => x.source === 'ide') && CONVERSATIONS.some(x => x.source === 'extension');
+      const hasMultipleSources = new Set(CONVERSATIONS.map(x => x.source).filter(Boolean)).size > 1;
       if (srcBadge) {
-        if (hasMultipleSources && conv.source) {
+        if (conv.source && (conv.source === 'cli' || conv.source === 'ide' || hasMultipleSources)) {
           srcBadge.classList.remove('hidden');
-          const isIde = conv.source === 'ide';
-          const icon = isIde
-            ? '<svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg>'
-            : '<svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg>';
-          srcBadge.innerHTML = icon + '<span>' + (isIde ? 'IDE' : 'Ext') + '</span>';
-          srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 ' + 
-            (isIde ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'bg-amber-500/20 text-amber-300 border border-amber-500/30');
-          srcBadge.title = isIde ? 'Source: Antigravity IDE' : 'Source: Antigravity Extension';
+          if (conv.source === 'cli') {
+            srcBadge.innerHTML = '<svg class="w-2.5 h-2.5 text-emerald-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg><span>CLI</span>';
+            srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+            srcBadge.title = 'Source: Antigravity CLI';
+          } else if (conv.source === 'ide') {
+            srcBadge.innerHTML = '<svg class="w-2.5 h-2.5 text-cyan-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2H4V5zm0 4h16v10a1 1 0 01-1 1H5a1 1 0 01-1-1V9z"/></svg><span>IDE</span>';
+            srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 bg-cyan-500/20 text-cyan-300 border border-cyan-500/30';
+            srcBadge.title = 'Source: Antigravity IDE';
+          } else {
+            srcBadge.innerHTML = '<svg class="w-2.5 h-2.5 text-amber-300 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4a2 2 0 114 0v1a1 1 0 001 1h3a1 1 0 011 1v3a1 1 0 01-1 1h-1a2 2 0 100 4h1a1 1 0 011 1v3a1 1 0 01-1 1h-3a1 1 0 01-1-1v-1a2 2 0 10-4 0v1a1 1 0 01-1 1H7a1 1 0 01-1-1v-3a1 1 0 00-1-1H4a2 2 0 110-4h1a1 1 0 001-1V7a1 1 0 011-1h3a1 1 0 001-1V4z"/></svg><span>Ext</span>';
+            srcBadge.className = 'inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold shrink-0 bg-amber-500/20 text-amber-300 border border-amber-500/30';
+            srcBadge.title = 'Source: Antigravity Extension';
+          }
         } else {
           srcBadge.classList.add('hidden');
         }
@@ -1495,67 +2057,360 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       document.getElementById('kpiOutputSub').textContent = 'Avg ' + (s.avgOutput || 0).toLocaleString() + ' tok / call · ' + (s.thinkingRate || '0.0') + '% think';
 
       // Token Composition 3-part Progress Bar & Legend
-      const pctRead = ((s.totalCached / tot) * 100).toFixed(1);
-      const pctWrite = ((s.totalNonCached / tot) * 100).toFixed(1);
-      const pctOut = ((s.totalOutput / tot) * 100).toFixed(1);
+      const pctRead = (((s.totalCached || 0) / tot) * 100).toFixed(1);
+      const pctWrite = (((s.totalNonCached || 0) / tot) * 100).toFixed(1);
+      const pctOut = (((s.totalOutput || 0) / tot) * 100).toFixed(1);
 
       document.getElementById('barCacheRead').style.width = pctRead + '%';
       document.getElementById('barCacheWrite').style.width = pctWrite + '%';
       document.getElementById('barOutput').style.width = pctOut + '%';
 
-      document.getElementById('legCacheRead').textContent = s.totalCached.toLocaleString() + ' tok';
+      document.getElementById('legCacheRead').textContent = (s.totalCached || 0).toLocaleString() + ' tok';
       document.getElementById('legCacheReadPct').textContent = pctRead + '%';
 
-      document.getElementById('legCacheWrite').textContent = s.totalNonCached.toLocaleString() + ' tok';
+      document.getElementById('legCacheWrite').textContent = (s.totalNonCached || 0).toLocaleString() + ' tok';
       document.getElementById('legCacheWritePct').textContent = pctWrite + '%';
 
-      document.getElementById('legOutput').textContent = s.totalOutput.toLocaleString() + ' tok';
+      document.getElementById('legOutput').textContent = (s.totalOutput || 0).toLocaleString() + ' tok';
       document.getElementById('legOutputPct').textContent = pctOut + '%';
 
-      // Session Intelligence & Turn Metrics
+      // Session Operations & Context Health (Issue #3 /context metrics)
+      const act = s.activity || {
+        userPrompts: 0,
+        assistantResponses: s.calls || 0,
+        executedCommands: 0,
+        filesReadCount: 0,
+        filesRead: [],
+        filesModifiedCount: 0,
+        filesModified: [],
+        subagentsInvoked: 0,
+        webRequests: 0,
+        analyzedImages: 0,
+        totalToolCalls: 0
+      };
+
+      const replies = act.assistantResponses || s.calls || 0;
+      const prompts = act.userPrompts || 0;
+      const autonomy = prompts > 0 ? (replies / prompts).toFixed(1) : (replies > 0 ? replies.toFixed(1) : '1.0');
+
+      const repliesEl = document.getElementById('actAssistantReplies');
+      if (repliesEl) repliesEl.textContent = replies.toLocaleString();
+      const promptsSubEl = document.getElementById('actUserPromptsSub');
+      if (promptsSubEl) {
+        promptsSubEl.textContent = prompts + ' prompt' + (prompts === 1 ? '' : 's') + ' · ' + autonomy + ' turns/prompt';
+        promptsSubEl.title = prompts + ' user prompts · ' + autonomy + ' agent turns per prompt (autonomy ratio)';
+      }
+
+      const filesReadEl = document.getElementById('actFilesRead');
+      if (filesReadEl) filesReadEl.textContent = (act.filesReadCount || 0).toLocaleString();
+      const filesModSubEl = document.getElementById('actFilesModifiedSub');
+      if (filesModSubEl) filesModSubEl.textContent = (act.filesModifiedCount || 0) + ' modified / created';
+
+      const commandsEl = document.getElementById('actCommands');
+      if (commandsEl) commandsEl.textContent = (act.executedCommands || 0).toLocaleString();
+      const toolsSubEl = document.getElementById('actTotalToolsSub');
+      if (toolsSubEl) toolsSubEl.textContent = (act.totalToolCalls || 0).toLocaleString() + ' total tool actions';
+
+      const imagesCount = act.analyzedImages || 0;
+      const imagesEl = document.getElementById('actImages');
+      if (imagesEl) imagesEl.textContent = imagesCount.toLocaleString();
+      const subsWebSubEl = document.getElementById('actSubagentsWebSub');
+      if (subsWebSubEl) {
+        subsWebSubEl.textContent = imagesCount === 1 ? '1 capture processed' : imagesCount + ' captures processed';
+        subsWebSubEl.title = imagesCount + ' multimodal image captures processed' + (act.subagentsInvoked > 0 || act.webRequests > 0 ? ' (' + act.subagentsInvoked + ' subagents, ' + act.webRequests + ' web calls)' : '');
+      }
+
+      const badgeCountEl = document.getElementById('actFilesBadgeCount');
+      if (badgeCountEl) badgeCountEl.textContent = (act.filesReadCount || 0) + ' read · ' + (act.filesModifiedCount || 0) + ' mod';
+
+      // Context Health & Allocation Calculations
+      const usedTokens = lastContext || 0;
+      const ceilingTokens = contextLimit || 256000;
+      const freeTokens = Math.max(0, ceilingTokens - usedTokens);
+      const usedPct = ceilingTokens > 0 ? ((usedTokens / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const freePct = ceilingTokens > 0 ? ((freeTokens / ceilingTokens) * 100).toFixed(1) : '100.0';
+
+      const healthPctEl = document.getElementById('contextHealthPct');
+      if (healthPctEl) healthPctEl.textContent = usedPct + '%';
+
+      const healthCeilEl = document.getElementById('contextHealthCeiling');
+      if (healthCeilEl) healthCeilEl.textContent = formatTok(ceilingTokens) + ' limit';
+
+      const healthUsedEl = document.getElementById('contextHealthUsed');
+      if (healthUsedEl) healthUsedEl.textContent = usedTokens.toLocaleString();
+
+      const healthFreeEl = document.getElementById('contextHealthFree');
+      if (healthFreeEl) healthFreeEl.textContent = freeTokens.toLocaleString();
+
+      const healthMeterEl = document.getElementById('contextHealthMeter');
+      const healthBadgeEl = document.getElementById('contextHealthStatusBadge');
+      const isBreakdownLoading = Boolean(isLoadingTimeline || (s.calls > 0 && ((!s.contextTimeline || s.contextTimeline.length === 0) || !s.activity)));
+
+      if (isBreakdownLoading) {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Analyzing...';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-blue-500/20 text-blue-300 border border-blue-500/30 animate-pulse';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-zinc-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900/60 rounded-full overflow-hidden flex border border-color/80 relative transition-all duration-300 opacity-60 animate-pulse';
+          healthMeterEl.title = 'Analyzing context allocation...';
+        }
+
+        const segPrompts = document.getElementById('segPrompts');
+        if (segPrompts) segPrompts.style.width = '0%';
+        const segReplies = document.getElementById('segReplies');
+        if (segReplies) segReplies.style.width = '0%';
+        const segFiles = document.getElementById('segFiles');
+        if (segFiles) segFiles.style.width = '0%';
+        const segCommands = document.getElementById('segCommands');
+        if (segCommands) segCommands.style.width = '0%';
+        const segImages = document.getElementById('segImages');
+        if (segImages) segImages.style.width = '0%';
+        const segFree = document.getElementById('segFree');
+        if (segFree) segFree.style.width = '0%';
+
+        const segPromptsVal = document.getElementById('segPromptsVal');
+        if (segPromptsVal) segPromptsVal.textContent = '...';
+        const segRepliesVal = document.getElementById('segRepliesVal');
+        if (segRepliesVal) segRepliesVal.textContent = '...';
+        const segFilesVal = document.getElementById('segFilesVal');
+        if (segFilesVal) segFilesVal.textContent = '...';
+        const segCommandsVal = document.getElementById('segCommandsVal');
+        if (segCommandsVal) segCommandsVal.textContent = '...';
+        const segImagesVal = document.getElementById('segImagesVal');
+        if (segImagesVal) segImagesVal.textContent = '...';
+        const segFreeVal = document.getElementById('segFreeVal');
+        if (segFreeVal) segFreeVal.textContent = freePct + '%';
+
+        const actRepliesFootprint = document.getElementById('actRepliesFootprint');
+        if (actRepliesFootprint) actRepliesFootprint.textContent = 'Analyzing...';
+        const actFilesFootprint = document.getElementById('actFilesFootprint');
+        if (actFilesFootprint) actFilesFootprint.textContent = 'Analyzing...';
+        const actCommandsFootprint = document.getElementById('actCommandsFootprint');
+        if (actCommandsFootprint) actCommandsFootprint.textContent = 'Analyzing...';
+        const actImagesFootprint = document.getElementById('actImagesFootprint');
+        if (actImagesFootprint) actImagesFootprint.textContent = 'Analyzing...';
+      } else {
+        const usedNum = parseFloat(usedPct) || 0;
+      if (usedNum >= 85) {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Compaction Alert';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-rose-500/20 text-rose-300 border border-rose-500/30';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-rose-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-rose-500/70 shadow-[0_0_8px_rgba(244,63,94,0.3)] relative transition-all duration-300';
+          healthMeterEl.title = 'Context Allocation: ' + usedPct + '% used (Compaction Alert)';
+        }
+      } else if (usedNum >= 60) {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Moderate Load';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-amber-500/20 text-amber-300 border border-amber-500/30';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-amber-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-amber-500/60 relative transition-all duration-300';
+          healthMeterEl.title = 'Context Allocation: ' + usedPct + '% used (Moderate Load)';
+        }
+      } else {
+        if (healthBadgeEl) {
+          healthBadgeEl.textContent = 'Optimal';
+          healthBadgeEl.className = 'px-1.5 py-0.5 rounded text-[9px] font-bold tracking-wide uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+        }
+        if (healthPctEl) healthPctEl.className = 'font-mono font-bold text-emerald-400';
+        if (healthMeterEl) {
+          healthMeterEl.className = 'h-3 w-full bg-zinc-900 rounded-full overflow-hidden flex border border-color/80 relative transition-all duration-300';
+          healthMeterEl.title = 'Context Allocation: ' + usedPct + '% used (Optimal)';
+        }
+      }
+
+      // Proportional Token Component Footprints
+      let imgTok = (act.analyzedImages || 0) * 1600;
+      let cmdTok = (act.executedCommands || 0) * 250;
+      const effectivePrompts = Math.max(1, act.userPrompts || 0);
+      let promptsTok = effectivePrompts * (s.avgInput ? Math.min(2000, Math.round(s.avgInput * 0.25)) : 300);
+      let repliesTok = (s.lastTurn ? s.lastTurn.output : s.avgOutput) || (act.assistantResponses * 300) || Math.round(usedTokens * 0.35);
+      let filesTok = 0;
+
+      if (usedTokens > 0) {
+        if (act.filesReadCount > 0) {
+          const rawNonFiles = imgTok + cmdTok + repliesTok + promptsTok;
+          if (rawNonFiles < usedTokens) {
+            filesTok = usedTokens - rawNonFiles;
+          } else {
+            filesTok = Math.round(usedTokens * 0.45);
+            const remaining = usedTokens - filesTok;
+            const factor = rawNonFiles > 0 ? (remaining / rawNonFiles) : 0;
+            imgTok = Math.round(imgTok * factor);
+            cmdTok = Math.round(cmdTok * factor);
+            repliesTok = Math.round(repliesTok * factor);
+            promptsTok = Math.max(0, usedTokens - filesTok - imgTok - cmdTok - repliesTok);
+          }
+        } else {
+          filesTok = 0;
+          const rawNonFiles = imgTok + cmdTok + repliesTok + promptsTok;
+          if (rawNonFiles > 0 && rawNonFiles !== usedTokens) {
+            const factor = usedTokens / rawNonFiles;
+            imgTok = Math.round(imgTok * factor);
+            cmdTok = Math.round(cmdTok * factor);
+            repliesTok = Math.round(repliesTok * factor);
+            promptsTok = Math.max(0, usedTokens - imgTok - cmdTok - repliesTok);
+          }
+        }
+      } else {
+        imgTok = 0;
+        cmdTok = 0;
+        repliesTok = 0;
+        promptsTok = 0;
+        filesTok = 0;
+      }
+
+      const promptsCeilPct = ceilingTokens > 0 ? ((promptsTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const repliesCeilPct = ceilingTokens > 0 ? ((repliesTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const filesCeilPct = ceilingTokens > 0 ? ((filesTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const cmdCeilPct = ceilingTokens > 0 ? ((cmdTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+      const imgCeilPct = ceilingTokens > 0 ? ((imgTok / ceilingTokens) * 100).toFixed(1) : '0.0';
+
+      const promptsCtxPct = usedTokens > 0 ? ((promptsTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const repliesCtxPct = usedTokens > 0 ? ((repliesTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const filesCtxPct = usedTokens > 0 ? ((filesTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const cmdCtxPct = usedTokens > 0 ? ((cmdTok / usedTokens) * 100).toFixed(1) : '0.0';
+      const imgCtxPct = usedTokens > 0 ? ((imgTok / usedTokens) * 100).toFixed(1) : '0.0';
+
+      // Segmented Allocation Bar
+      const segPrompts = document.getElementById('segPrompts');
+      if (segPrompts) {
+        segPrompts.style.width = promptsCeilPct + '%';
+        segPrompts.title = 'User Prompts: ~' + promptsTok.toLocaleString() + ' tok (' + promptsCeilPct + '% of ceiling)';
+      }
+      const segReplies = document.getElementById('segReplies');
+      if (segReplies) {
+        segReplies.style.width = repliesCeilPct + '%';
+        segReplies.title = 'Assistant Responses: ~' + repliesTok.toLocaleString() + ' tok (' + repliesCeilPct + '% of ceiling)';
+      }
+      const segFiles = document.getElementById('segFiles');
+      if (segFiles) {
+        segFiles.style.width = filesCeilPct + '%';
+        segFiles.title = 'Codebase Files: ~' + filesTok.toLocaleString() + ' tok (' + filesCeilPct + '% of ceiling)';
+      }
+      const segCommands = document.getElementById('segCommands');
+      if (segCommands) {
+        segCommands.style.width = cmdCeilPct + '%';
+        segCommands.title = 'Executed Commands: ~' + cmdTok.toLocaleString() + ' tok (' + cmdCeilPct + '% of ceiling)';
+      }
+      const segImages = document.getElementById('segImages');
+      if (segImages) {
+        segImages.style.width = imgCeilPct + '%';
+        segImages.title = 'Analyzed Images: ~' + imgTok.toLocaleString() + ' tok (' + imgCeilPct + '% of ceiling)';
+      }
+      const segFree = document.getElementById('segFree');
+      if (segFree) {
+        segFree.style.width = freePct + '%';
+        segFree.title = 'Available Headroom: ' + freeTokens.toLocaleString() + ' tok (' + freePct + '% free)';
+      }
+
+      // Micro-Legend Labels
+      const segPromptsVal = document.getElementById('segPromptsVal');
+      if (segPromptsVal) segPromptsVal.textContent = promptsCtxPct + '%';
+      const segRepliesVal = document.getElementById('segRepliesVal');
+      if (segRepliesVal) segRepliesVal.textContent = repliesCtxPct + '%';
+      const segFilesVal = document.getElementById('segFilesVal');
+      if (segFilesVal) segFilesVal.textContent = filesCtxPct + '%';
+      const segCommandsVal = document.getElementById('segCommandsVal');
+      if (segCommandsVal) segCommandsVal.textContent = cmdCtxPct + '%';
+      const segImagesVal = document.getElementById('segImagesVal');
+      if (segImagesVal) segImagesVal.textContent = imgCtxPct + '%';
+      const segFreeVal = document.getElementById('segFreeVal');
+      if (segFreeVal) segFreeVal.textContent = freePct + '%';
+
+      // Card Footprint Pills
+      const actRepliesFootprint = document.getElementById('actRepliesFootprint');
+      if (actRepliesFootprint) actRepliesFootprint.textContent = '~' + formatTok(repliesTok) + ' tok (' + repliesCtxPct + '%)';
+      const actFilesFootprint = document.getElementById('actFilesFootprint');
+      if (actFilesFootprint) actFilesFootprint.textContent = '~' + formatTok(filesTok) + ' tok (' + filesCtxPct + '%)';
+      const actCommandsFootprint = document.getElementById('actCommandsFootprint');
+      if (actCommandsFootprint) actCommandsFootprint.textContent = '~' + formatTok(cmdTok) + ' tok (' + cmdCtxPct + '%)';
+      const actImagesFootprint = document.getElementById('actImagesFootprint');
+      if (actImagesFootprint) actImagesFootprint.textContent = '~' + formatTok(imgTok) + ' tok (' + imgCtxPct + '%)';
+
+      }
+
+      // Populate file lists in drawer with search filter & badges
+      renderDrawerFiles(fileFilterQuery);
+      updateActivityFilesState();
+
+      // Streamlined Turn & Cache Intelligence
       // Card 1: Last Turn Activity
       const lt = s.lastTurn;
       if (lt) {
-        document.getElementById('metaLastTurnNum').textContent = 'Turn #' + lt.turn;
-        document.getElementById('metaLastContext').textContent = formatTok(lt.context != null ? lt.context : lt.totalInput) + ' tok';
-        document.getElementById('metaLastFresh').textContent = '+' + formatTok(lt.fresh) + ' fresh';
-        document.getElementById('metaLastOutput').textContent = lt.output.toLocaleString() + ' tok (' + lt.thinking.toLocaleString() + ' thk)';
-        if (lt.isCompacted) {
-          document.getElementById('metaLastCompaction').innerHTML = '<span class="text-red-400 font-bold">Compacted (-' + formatTok(lt.compactedAmount) + ')</span>';
-        } else {
-          document.getElementById('metaLastCompaction').innerHTML = '<span class="text-emerald-400 font-medium">Normal</span>';
+        const ltNumEl = document.getElementById('metaLastTurnNum');
+        if (ltNumEl) ltNumEl.textContent = 'Turn #' + lt.turn;
+        const ltCtxEl = document.getElementById('metaLastContext');
+        if (ltCtxEl) ltCtxEl.textContent = formatTok(lt.context != null ? lt.context : lt.totalInput) + ' tok';
+        const ltFreshEl = document.getElementById('metaLastFresh');
+        if (ltFreshEl) ltFreshEl.textContent = '+' + formatTok(lt.fresh) + ' fresh';
+        const ltOutEl = document.getElementById('metaLastOutput');
+        if (ltOutEl) ltOutEl.textContent = lt.output.toLocaleString() + ' tok (' + lt.thinking.toLocaleString() + ' thk)';
+        const ltCompEl = document.getElementById('metaLastCompaction');
+        if (ltCompEl) {
+          if (lt.isCompacted) {
+            ltCompEl.innerHTML = '<span class="text-red-400 font-bold">Compacted (-' + formatTok(lt.compactedAmount) + ')</span>';
+          } else {
+            ltCompEl.innerHTML = '<span class="text-emerald-400 font-medium">Normal</span>';
+          }
         }
       } else {
-        document.getElementById('metaLastTurnNum').textContent = 'Turn #--';
-        document.getElementById('metaLastContext').textContent = '0 tok';
-        document.getElementById('metaLastFresh').textContent = '+0 fresh';
-        document.getElementById('metaLastOutput').textContent = '0 tok';
-        document.getElementById('metaLastCompaction').textContent = 'Normal';
+        const ltNumEl = document.getElementById('metaLastTurnNum');
+        if (ltNumEl) ltNumEl.textContent = 'Turn #--';
+        const ltCtxEl = document.getElementById('metaLastContext');
+        if (ltCtxEl) ltCtxEl.textContent = '0 tok';
+        const ltFreshEl = document.getElementById('metaLastFresh');
+        if (ltFreshEl) ltFreshEl.textContent = '+0 fresh';
+        const ltOutEl = document.getElementById('metaLastOutput');
+        if (ltOutEl) ltOutEl.textContent = '0 tok';
+        const ltCompEl = document.getElementById('metaLastCompaction');
+        if (ltCompEl) ltCompEl.textContent = 'Normal';
       }
 
-      // Card 2: Per-Turn Averages
-      document.getElementById('metaAvgContext').textContent = formatTok(s.avgContext) + ' tok';
-      document.getElementById('metaAvgOutput').textContent = (s.avgOutput || 0).toLocaleString() + ' tok / call';
-      const thinkRatio = s.avgOutput > 0 ? Math.round(((s.avgThinking || 0) / s.avgOutput) * 100) : 0;
-      document.getElementById('metaAvgThinking').textContent = (s.avgThinking || 0).toLocaleString() + ' tok (' + thinkRatio + '%)';
-      document.getElementById('metaAvgCached').textContent = formatTok(s.avgCached) + ' tok';
+      // Card 2: Trajectory Dynamics & Net Growth
+      const netGrowth = usedTokens - (s.minContext || 0);
+      const netPill = document.getElementById('metaTrajectoryNetPill');
+      if (netPill) {
+        const sign = netGrowth >= 0 ? '+' : '';
+        netPill.textContent = sign + formatTok(netGrowth) + ' tok net';
+        netPill.className = netGrowth >= 0
+          ? 'text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-blue-500/15 text-blue-300 border border-blue-500/30'
+          : 'text-[9px] px-1.5 py-0.2 rounded font-mono font-medium bg-emerald-500/15 text-emerald-300 border border-emerald-500/30';
+      }
+      const peakPct = Math.min(100, Math.round(((s.peakContext || 0) / ceilingTokens) * 100));
+      const peakCtxEl = document.getElementById('metaPeakContext');
+      if (peakCtxEl) peakCtxEl.textContent = formatTok(s.peakContext) + ' (' + peakPct + '%)';
+      const minCtxEl = document.getElementById('metaMinContext');
+      if (minCtxEl) minCtxEl.textContent = formatTok(s.minContext) + ' tok';
+      const avgCtxEl = document.getElementById('metaAvgContext');
+      if (avgCtxEl) avgCtxEl.textContent = formatTok(s.avgContext) + ' tok';
+      const compEventsEl = document.getElementById('metaCompactions');
+      if (compEventsEl) compEventsEl.textContent = (s.compactionsCount || 0) + ' events';
 
-      // Card 3: Cache Reliability & Compactions
-      document.getElementById('metaCacheCalls').textContent = s.cacheHits + ' / ' + s.calls + ' Hits';
-      document.getElementById('metaCacheMisses').textContent = s.cacheMisses + ' misses';
-      document.getElementById('metaCompactions').textContent = (s.compactionsCount || 0) + ' events';
-      const limitLabel = formatTok(contextLimit);
+      // Card 3: Cache Acceleration
+      const hitRateNum = parseFloat(s.cacheHitRate) || 0;
+      const speedup = hitRateNum > 0 ? (1 / Math.max(0.05, (1 - (hitRateNum / 100) * 0.85))).toFixed(1) : '1.0';
+      const speedupPill = document.getElementById('metaCacheSpeedupPill');
+      if (speedupPill) speedupPill.textContent = '~' + speedup + 'x faster';
+
+      const cacheCallsEl = document.getElementById('metaCacheCalls');
+      if (cacheCallsEl) cacheCallsEl.textContent = s.cacheHits + ' / ' + s.calls + ' Hits (' + s.cacheHitRate + '%)';
+      const cacheMissesEl = document.getElementById('metaCacheMisses');
+      if (cacheMissesEl) cacheMissesEl.textContent = s.cacheMisses + ' misses';
+      const avgCachedEl = document.getElementById('metaAvgCached');
+      if (avgCachedEl) avgCachedEl.textContent = formatTok(s.avgCached) + ' tok avg';
+
+      const limitLabel = formatTok(ceilingTokens);
       const ceilEl = document.getElementById('metaCeilingLimit');
       if (ceilEl) ceilEl.textContent = limitLabel + ' limit';
       const chartCeilLeg = document.getElementById('chartCeilingLegend');
       if (chartCeilLeg) chartCeilLeg.textContent = limitLabel + ' Limit';
-
-      // Card 4: Session Peaks
-      const peakPct = Math.min(100, Math.round(((s.peakContext || 0) / contextLimit) * 100));
-      document.getElementById('metaPeakContext').textContent = formatTok(s.peakContext) + ' (' + peakPct + '%)';
-      document.getElementById('metaPeakOutput').textContent = (s.peakOutput || 0).toLocaleString() + ' tok';
-      document.getElementById('metaPeakThinking').textContent = (s.peakThinking || 0).toLocaleString() + ' tok';
-      document.getElementById('metaMinContext').textContent = formatTok(s.minContext) + ' tok';
 
       currentTimeline = s.contextTimeline || [];
       renderChart(currentTimeline);
@@ -1582,21 +2437,71 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       }
     }
 
+    function toggleActivityFiles() {
+      activityFilesOpen = !activityFilesOpen;
+      updateActivityFilesState();
+    }
+
+    function updateActivityFilesState() {
+      const drawer = document.getElementById('actFilesDrawer');
+      const chevron = document.getElementById('actFilesChevron');
+      if (!drawer) return;
+      if (activityFilesOpen) {
+        drawer.classList.remove('hidden');
+        if (chevron) chevron.textContent = '▲';
+      } else {
+        drawer.classList.add('hidden');
+        if (chevron) chevron.textContent = '▼';
+      }
+    }
+
     let lastRenderedChartId = null;
     let lastRenderedTimelineLen = 0;
     let lastRenderedLastInput = null;
 
     function renderChart(timeline, forceRedraw = false) {
       const svg = document.getElementById('timelineSvg');
+      const tooltip = document.getElementById('chartTooltip');
+      const loadingOverlay = document.getElementById('chartLoadingOverlay');
+      const emptyState = document.getElementById('chartEmptyState');
+      const countEl = document.getElementById('chartPointsCount');
+      const conv = CONVERSATIONS.find(c => c.id === selectedId);
+      const calls = (conv && conv.stats && conv.stats.calls) || 0;
+
       if (!timeline || timeline.length === 0) {
-        svg.innerHTML = '';
-        const tooltip = document.getElementById('chartTooltip');
+        if (svg) svg.innerHTML = '';
         if (tooltip) tooltip.classList.add('hidden');
-        document.getElementById('chartPointsCount').textContent = '0 points';
         lastRenderedChartId = null;
         lastRenderedTimelineLen = 0;
         lastRenderedLastInput = null;
+
+        if (isLoadingTimeline || calls > 0) {
+          if (loadingOverlay) {
+            loadingOverlay.classList.remove('hidden');
+            const txt = document.getElementById('chartLoadingText');
+            if (txt) txt.textContent = 'Loading trajectory timeline (' + calls + ' turn' + (calls === 1 ? '' : 's') + ')...';
+          }
+          if (emptyState) emptyState.classList.add('hidden');
+          if (countEl) {
+            countEl.textContent = 'Loading turns...';
+            countEl.className = 'text-[10px] px-2 py-0.5 rounded inner-bg border border-blue-500/30 text-blue-400 font-semibold animate-pulse';
+          }
+        } else {
+          if (loadingOverlay) loadingOverlay.classList.add('hidden');
+          if (emptyState) emptyState.classList.remove('hidden');
+          if (countEl) {
+            countEl.textContent = '0 points';
+            countEl.className = 'text-[10px] px-2 py-0.5 rounded inner-bg border border-color muted-color';
+          }
+        }
         return;
+      }
+
+      if (loadingOverlay) loadingOverlay.classList.add('hidden');
+      if (emptyState) emptyState.classList.add('hidden');
+      if (countEl) {
+        countEl.textContent = timeline.length + (timeline.length === 1 ? ' point' : ' points');
+        countEl.className = 'text-[10px] px-2 py-0.5 rounded inner-bg border border-color muted-color';
       }
 
       const lastPoint = timeline[timeline.length - 1];
@@ -1610,10 +2515,7 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       lastRenderedLastInput = lastInput;
 
       if (svg) svg.innerHTML = '';
-      const tooltip = document.getElementById('chartTooltip');
       if (tooltip) tooltip.classList.add('hidden');
-
-      document.getElementById('chartPointsCount').textContent = timeline.length + ' data points';
 
       const w = svg.clientWidth || 500;
       const h = svg.clientHeight || 170;
@@ -1625,7 +2527,6 @@ function getDashboardHtml(conversations, activeId, options = {}) {
       const chartH = h - padTop - padBottom;
 
       // Compaction ceiling calibrated to 256,000 tokens (or conversation limit)
-      const conv = CONVERSATIONS.find(c => c.id === selectedId);
       const ceilingTokens = (conv && conv.stats && conv.stats.contextLimit) || 256000;
       const maxDataTokens = Math.max(...timeline.map(t => Math.max(t.input || 0, t.cached || 0))) || 1;
       const maxVal = Math.max(ceilingTokens, maxDataTokens * 1.05);
@@ -1867,7 +2768,8 @@ function getDashboardHtml(conversations, activeId, options = {}) {
         ['deleteChatBtn', () => promptDeleteCurrent()],
         ['delModalCancelBtn', () => closeDeleteModal()],
         ['delModalConfirmBtn', () => confirmDeleteExec()],
-        ['subagentsToggleBtn', () => toggleSubagentsCollapse()]
+        ['subagentsToggleBtn', () => toggleSubagentsCollapse()],
+        ['actToggleFilesBtn', () => toggleActivityFiles()]
       ];
       for (const [id, handler] of handlers) {
         if (!handler) continue;
@@ -1890,6 +2792,13 @@ function getDashboardHtml(conversations, activeId, options = {}) {
           renderDetail();
         };
       }
+      const fileFilterInput = document.getElementById('actFileFilterInput');
+      if (fileFilterInput) {
+        fileFilterInput.oninput = (e) => {
+          fileFilterQuery = (e.target.value || '').toLowerCase().trim();
+          renderDrawerFiles(fileFilterQuery);
+        };
+      }
       const search = document.getElementById('searchInput');
       if (search) {
         search.oninput = () => filterList();
@@ -1907,6 +2816,20 @@ function getDashboardHtml(conversations, activeId, options = {}) {
     populateDropdown();
     filterList();
     updateGlobalHeaders();
+
+    const initConv = CONVERSATIONS.find(c => c.id === selectedId) || CONVERSATIONS[0];
+    const needsInitData = Boolean(
+      initConv && initConv.stats && 
+      ((!initConv.stats.contextTimeline || initConv.stats.contextTimeline.length === 0) || !initConv.stats.activity) && 
+      initConv.stats.calls > 0
+    );
+    if (needsInitData) {
+      isLoadingTimeline = true;
+      try {
+        vscode.postMessage({ command: 'getTimeline', conversationId: selectedId });
+      } catch {}
+    }
+
     renderDetail();
     window.onresize = () => {
       const conv = CONVERSATIONS.find(c => c.id === selectedId);

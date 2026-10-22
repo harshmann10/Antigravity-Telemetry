@@ -23,6 +23,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write
 
 jobs:
   build-and-release:
@@ -89,3 +90,8 @@ jobs:
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish to Open VSX
+        if: ${{ !inputs.draft }}
+        run: |
+          npx ovsx publish "${{ steps.vsix_asset.outputs.file }}" --trusted-publishing

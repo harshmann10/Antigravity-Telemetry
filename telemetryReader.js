@@ -24,13 +24,9 @@ const STORAGE_MAX_AGE_MS = 30 * 60 * 1000;
 // Keyed on (mtimeMs, size, walSignature) so an unchanged DB costs zero sqlite3 spawns.
 const analysisCache = new Map();
 
-// Global catalog summaries cache: cached parsing of conversation_summaries.db
-let summariesCache = {
-  mtimeMs: 0,
-  size: 0,
-  walSignature: '',
-  map: null
-};
+// Global catalog summaries caches: cached parsing of conversation_summaries.db keyed by normalized summariesDb path
+// Map<string, { mtimeMs: number, size: number, walSignature: string, map: object }>
+const summariesCaches = new Map();
 
 // VS Code state store cache: cached parsing of state.vscdb (Antigravity IDE)
 let vscdbCache = {
@@ -43,7 +39,7 @@ let cacheIsDirty = false;
 
 function clearAnalysisCache() {
   analysisCache.clear();
-  summariesCache = { mtimeMs: 0, size: 0, walSignature: '', map: null };
+  summariesCaches.clear();
   vscdbCache = { mtimeMs: 0, size: 0, map: null };
   cacheIsDirty = true;
 }
@@ -61,14 +57,20 @@ function dumpAnalysisCache() {
   for (const [id, entry] of analysisCache.entries()) {
     conversations[id] = entry;
   }
+  const summariesObj = {};
+  for (const [p, c] of summariesCaches.entries()) {
+    if (c && c.map) {
+      summariesObj[p] = {
+        mtimeMs: c.mtimeMs,
+        size: c.size,
+        walSignature: c.walSignature,
+        map: c.map
+      };
+    }
+  }
   return {
     conversations,
-    summaries: summariesCache.map ? {
-      mtimeMs: summariesCache.mtimeMs,
-      size: summariesCache.size,
-      walSignature: summariesCache.walSignature,
-      map: summariesCache.map
-    } : null,
+    summaries: Object.keys(summariesObj).length > 0 ? summariesObj : null,
     vscdb: vscdbCache.map ? {
       mtimeMs: vscdbCache.mtimeMs,
       size: vscdbCache.size,
@@ -88,13 +90,28 @@ function loadAnalysisCache(cached) {
       }
     }
   }
-  if (cached.summaries && typeof cached.summaries === 'object' && cached.summaries.map) {
-    summariesCache = {
-      mtimeMs: cached.summaries.mtimeMs || 0,
-      size: cached.summaries.size || 0,
-      walSignature: cached.summaries.walSignature || '',
-      map: cached.summaries.map
-    };
+  if (cached.summaries && typeof cached.summaries === 'object') {
+    summariesCaches.clear();
+    if (cached.summaries.map) {
+      const defaultDb = path.normalize(path.join(os.homedir(), '.gemini', 'antigravity', 'conversation_summaries.db'));
+      summariesCaches.set(defaultDb, {
+        mtimeMs: cached.summaries.mtimeMs || 0,
+        size: cached.summaries.size || 0,
+        walSignature: cached.summaries.walSignature || '',
+        map: cached.summaries.map
+      });
+    } else {
+      for (const [dbPath, entry] of Object.entries(cached.summaries)) {
+        if (entry && entry.map) {
+          summariesCaches.set(path.normalize(dbPath), {
+            mtimeMs: entry.mtimeMs || 0,
+            size: entry.size || 0,
+            walSignature: entry.walSignature || '',
+            map: entry.map
+          });
+        }
+      }
+    }
   }
   if (cached.vscdb && typeof cached.vscdb === 'object' && cached.vscdb.map) {
     vscdbCache = {
@@ -115,14 +132,24 @@ function prepareConversationsForWebview(conversations, selectedId) {
     if (c.id === selectedId) {
       return c;
     }
-    if (!c.stats || !c.stats.contextTimeline || c.stats.contextTimeline.length === 0) {
+    const hasTimeline = c.stats && c.stats.contextTimeline && c.stats.contextTimeline.length > 0;
+    const hasFilesList = c.stats && c.stats.activity && (
+      (c.stats.activity.filesRead && c.stats.activity.filesRead.length > 0) ||
+      (c.stats.activity.filesModified && c.stats.activity.filesModified.length > 0)
+    );
+    if (!hasTimeline && !hasFilesList) {
       return c;
     }
     return {
       ...c,
       stats: {
         ...c.stats,
-        contextTimeline: []
+        contextTimeline: [],
+        activity: c.stats.activity ? {
+          ...c.stats.activity,
+          filesRead: [],
+          filesModified: []
+        } : null
       }
     };
   });
@@ -234,11 +261,37 @@ function getSqliteBinary() {
   if (cachedSqlitePath) return cachedSqlitePath;
   const candidates = [];
   if (customSqlitePath) candidates.push(customSqlitePath);
-  candidates.push(
-    'C:\\Users\\Harsh\\adb-fastboot\\platform-tools\\sqlite3.exe',
-    'sqlite3',
-    'sqlite3.exe'
-  );
+  // 1. System PATH lookup (default on Windows, macOS, Linux)
+  candidates.push('sqlite3', 'sqlite3.exe');
+
+  // 2. OS-specific common binary locations
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA || '';
+    const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+    const userProfile = process.env.USERPROFILE || '';
+    if (localAppData) {
+      candidates.push(
+        path.join(localAppData, 'Programs', 'sqlite3', 'sqlite3.exe'),
+        path.join(localAppData, 'Microsoft', 'WindowsApps', 'sqlite3.exe')
+      );
+    }
+    if (userProfile) {
+      candidates.push(path.join(userProfile, 'scoop', 'shims', 'sqlite3.exe'));
+    }
+    candidates.push(
+      'C:\\ProgramData\\chocolatey\\bin\\sqlite3.exe',
+      path.join(programFiles, 'sqlite', 'sqlite3.exe'),
+      path.join(systemRoot, 'System32', 'sqlite3.exe')
+    );
+  } else {
+    candidates.push(
+      '/usr/bin/sqlite3',
+      '/usr/local/bin/sqlite3',
+      '/opt/homebrew/bin/sqlite3',
+      '/usr/pkg/bin/sqlite3'
+    );
+  }
   for (const c of candidates) {
     try {
       execSync(`"${c}" --version`, { stdio: 'ignore' });
@@ -270,6 +323,7 @@ function getInstallationRoots(preference, hostEditor) {
   const userHome = os.homedir();
   const extensionDir = path.join(userHome, '.gemini', 'antigravity');
   const ideDir = path.join(userHome, '.gemini', 'antigravity-ide');
+  const cliDir = path.join(userHome, '.gemini', 'antigravity-cli');
 
   const candidateVscdb = [];
   if (process.platform === 'win32' && process.env.APPDATA) {
@@ -303,6 +357,7 @@ function getInstallationRoots(preference, hostEditor) {
 
   const hasExtension = fs.existsSync(extensionDir);
   const hasIde = fs.existsSync(ideDir);
+  const hasCli = fs.existsSync(cliDir);
 
   const ideRoot = {
     id: 'ide',
@@ -322,15 +377,27 @@ function getInstallationRoots(preference, hostEditor) {
     stateVscdb: null
   };
 
+  const cliRoot = {
+    id: 'cli',
+    name: 'Antigravity CLI',
+    antigravityDir: cliDir,
+    convDir: path.join(cliDir, 'conversations'),
+    summariesDb: path.join(cliDir, 'conversation_summaries.db'),
+    stateVscdb: null
+  };
+
   const roots = [];
 
   if (pref === 'ide') {
     if (hasIde) roots.push(ideRoot);
   } else if (pref === 'extension') {
     if (hasExtension) roots.push(extensionRoot);
-  } else if (pref === 'both') {
+  } else if (pref === 'cli') {
+    if (hasCli) roots.push(cliRoot);
+  } else if (pref === 'all' || pref === 'both') {
     if (hasIde) roots.push(ideRoot);
     if (hasExtension) roots.push(extensionRoot);
+    if (hasCli) roots.push(cliRoot);
   } else {
     // pref === 'auto' -> strictly select the active host editor environment to prevent clutter
     const target = hostEditor || detectRunningEnvironment();
@@ -351,6 +418,8 @@ function getInstallationRoots(preference, hostEditor) {
   // Fallback if roots is still empty
   if (roots.length === 0) {
     if (hasIde) roots.push(ideRoot);
+    else if (hasExtension) roots.push(extensionRoot);
+    else if (hasCli) roots.push(cliRoot);
     else roots.push(extensionRoot);
   }
 
@@ -482,18 +551,29 @@ function getConversationSummaries(summariesDb, sqliteBin) {
     return {};
   }
 
+  const normDb = path.normalize(summariesDb);
   const walSig = walSignatureOf(summariesDb);
-  if (summariesCache.map &&
-    summariesCache.mtimeMs === stat.mtimeMs &&
-    summariesCache.size === stat.size &&
-    summariesCache.walSignature === walSig) {
-    return summariesCache.map;
+  const cached = summariesCaches.get(normDb);
+  if (cached && cached.map &&
+      cached.mtimeMs === stat.mtimeMs &&
+      cached.size === stat.size &&
+      cached.walSignature === walSig) {
+    return cached.map;
   }
 
   try {
-    const sql = `SELECT conversation_id, ifnull(title,'') AS title, ifnull(preview,'') AS preview, ifnull(step_count,0) AS step_count, ifnull(last_modified_time,'') AS last_modified_time, ifnull(workspace_uris,'') AS workspace_uris, ifnull(parent_conversation_id,'') AS parent_conversation_id, ifnull(nesting_depth,0) AS nesting_depth, ifnull(agent_name,'') AS agent_name, ifnull(killed,0) AS killed, HEX(raw_summary) AS hex_raw FROM conversation_summaries ORDER BY last_modified_time DESC;`;
-    const out = execSync(`"${sqliteBin}" "${summariesDb}" -json "${sql}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
-    const rows = JSON.parse(out);
+    let rows = null;
+    try {
+      const sql = `SELECT conversation_id, ifnull(title,'') AS title, ifnull(preview,'') AS preview, ifnull(step_count,0) AS step_count, ifnull(last_modified_time,'') AS last_modified_time, ifnull(workspace_uris,'') AS workspace_uris, ifnull(parent_conversation_id,'') AS parent_conversation_id, ifnull(nesting_depth,0) AS nesting_depth, ifnull(agent_name,'') AS agent_name, ifnull(killed,0) AS killed, ifnull(status,'') AS status, ifnull(not_fully_idle,0) AS not_fully_idle, HEX(raw_summary) AS hex_raw FROM conversation_summaries ORDER BY last_modified_time DESC;`;
+      const out = execSync(`"${sqliteBin}" "${summariesDb}" -json "${sql}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
+      rows = JSON.parse(out);
+    } catch {
+      // Fallback for older schema without status or not_fully_idle columns
+      const sqlBase = `SELECT conversation_id, ifnull(title,'') AS title, ifnull(preview,'') AS preview, ifnull(step_count,0) AS step_count, ifnull(last_modified_time,'') AS last_modified_time, ifnull(workspace_uris,'') AS workspace_uris, ifnull(parent_conversation_id,'') AS parent_conversation_id, ifnull(nesting_depth,0) AS nesting_depth, ifnull(agent_name,'') AS agent_name, ifnull(killed,0) AS killed, HEX(raw_summary) AS hex_raw FROM conversation_summaries ORDER BY last_modified_time DESC;`;
+      const out = execSync(`"${sqliteBin}" "${summariesDb}" -json "${sqlBase}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
+      rows = JSON.parse(out);
+    }
+
     const map = {};
     for (const r of rows) {
       if (!r.conversation_id) continue;
@@ -514,6 +594,8 @@ function getConversationSummaries(summariesDb, sqliteBin) {
       }
 
       const wsInfo = parseWorkspaceInfo(r.workspace_uris);
+      const isRunning = r.status === 'CASCADE_RUN_STATUS_RUNNING' || Number(r.not_fully_idle) === 1 || r.not_fully_idle === 'true' || r.not_fully_idle === true;
+
       map[r.conversation_id] = {
         id: r.conversation_id,
         title,
@@ -527,7 +609,10 @@ function getConversationSummaries(summariesDb, sqliteBin) {
         agentName: r.agent_name,
         agentRole: subagentRole,
         isSubagent,
-        killed: Boolean(r.killed)
+        killed: Boolean(r.killed),
+        status: r.status || '',
+        notFullyIdle: Boolean(Number(r.not_fully_idle) || r.not_fully_idle === 'true' || r.not_fully_idle === true),
+        isRunning
       };
     }
     // Resolve parent titles in a second pass — a child can precede its parent in the result set.
@@ -535,20 +620,26 @@ function getConversationSummaries(summariesDb, sqliteBin) {
       const parentId = map[id].parentConversationId;
       if (parentId && map[parentId]) map[id].parentTitle = map[parentId].title;
     }
-    summariesCache = {
+    summariesCaches.set(normDb, {
       mtimeMs: stat.mtimeMs,
       size: stat.size,
       walSignature: walSig,
       map
-    };
+    });
     cacheIsDirty = true;
     return map;
   } catch (err) {
     // Fallback if -json is unsupported in ancient sqlite3 versions
     try {
       const sep = '---AGSEP---';
-      const sql = `SELECT conversation_id || '${sep}' || replace(replace(ifnull(title,''),char(10),' '),char(13),'') || '${sep}' || replace(replace(ifnull(preview,''),char(10),' '),char(13),'') || '${sep}' || ifnull(step_count,0) || '${sep}' || ifnull(last_modified_time,'') || '${sep}' || ifnull(workspace_uris,'') || '${sep}' || ifnull(parent_conversation_id,'') || '${sep}' || ifnull(nesting_depth,0) || '${sep}' || ifnull(agent_name,'') || '${sep}' || ifnull(killed,0) || '${sep}' || ifnull(HEX(raw_summary),'') FROM conversation_summaries ORDER BY last_modified_time DESC;`;
-      const out = execSync(`"${sqliteBin}" "${summariesDb}" "${sql}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
+      let out = '';
+      try {
+        const sql = `SELECT conversation_id || '${sep}' || replace(replace(ifnull(title,''),char(10),' '),char(13),'') || '${sep}' || replace(replace(ifnull(preview,''),char(10),' '),char(13),'') || '${sep}' || ifnull(step_count,0) || '${sep}' || ifnull(last_modified_time,'') || '${sep}' || ifnull(workspace_uris,'') || '${sep}' || ifnull(parent_conversation_id,'') || '${sep}' || ifnull(nesting_depth,0) || '${sep}' || ifnull(agent_name,'') || '${sep}' || ifnull(killed,0) || '${sep}' || ifnull(HEX(raw_summary),'') || '${sep}' || ifnull(status,'') || '${sep}' || ifnull(not_fully_idle,0) FROM conversation_summaries ORDER BY last_modified_time DESC;`;
+        out = execSync(`"${sqliteBin}" "${summariesDb}" "${sql}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
+      } catch {
+        const sqlBase = `SELECT conversation_id || '${sep}' || replace(replace(ifnull(title,''),char(10),' '),char(13),'') || '${sep}' || replace(replace(ifnull(preview,''),char(10),' '),char(13),'') || '${sep}' || ifnull(step_count,0) || '${sep}' || ifnull(last_modified_time,'') || '${sep}' || ifnull(workspace_uris,'') || '${sep}' || ifnull(parent_conversation_id,'') || '${sep}' || ifnull(nesting_depth,0) || '${sep}' || ifnull(agent_name,'') || '${sep}' || ifnull(killed,0) || '${sep}' || ifnull(HEX(raw_summary),'') FROM conversation_summaries ORDER BY last_modified_time DESC;`;
+        out = execSync(`"${sqliteBin}" "${summariesDb}" "${sqlBase}"`, { maxBuffer: 10 * 1024 * 1024 }).toString();
+      }
       const map = {};
       for (const line of out.split('\n')) {
         const clean = line.replace(/\r$/, '');
@@ -566,6 +657,8 @@ function getConversationSummaries(summariesDb, sqliteBin) {
         const agentName = parts[8] || '';
         const killed = Boolean(parseInt(parts[9], 10) || 0);
         const hexRaw = parts[10] || '';
+        const status = parts[11] || '';
+        const notFullyIdle = Boolean(parseInt(parts[12], 10) || 0);
 
         const isSubagent = Boolean(parentConversationId || agentName);
         const subagentRole = (isSubagent && hexRaw) ? extractSubagentRole(hexRaw) : '';
@@ -584,6 +677,8 @@ function getConversationSummaries(summariesDb, sqliteBin) {
         }
 
         const wsInfo = parseWorkspaceInfo(wsRaw);
+        const isRunning = status === 'CASCADE_RUN_STATUS_RUNNING' || notFullyIdle;
+
         map[id] = {
           id,
           title,
@@ -597,19 +692,22 @@ function getConversationSummaries(summariesDb, sqliteBin) {
           agentName,
           agentRole: subagentRole,
           isSubagent,
-          killed
+          killed,
+          status,
+          notFullyIdle,
+          isRunning
         };
       }
       for (const id of Object.keys(map)) {
         const parentId = map[id].parentConversationId;
         if (parentId && map[parentId]) map[id].parentTitle = map[parentId].title;
       }
-      summariesCache = {
+      summariesCaches.set(normDb, {
         mtimeMs: stat.mtimeMs,
         size: stat.size,
         walSignature: walSig,
         map
-      };
+      });
       cacheIsDirty = true;
       return map;
     } catch {
@@ -1008,10 +1106,111 @@ function queryNewRows(sqliteBin, dbPath, lastIdx) {
   return { structural, rows };
 }
 
+// Extracts detailed session activity and tool usage metrics (CLI /context metrics).
+// Inspects the steps table in <id>.db across CLI, IDE, and Extension environments.
+function extractSessionActivity(dbPath, sqliteBin, antigravityDir, cId) {
+  const result = {
+    userPrompts: 0,
+    assistantResponses: 0,
+    executedCommands: 0,
+    filesReadCount: 0,
+    filesRead: [],
+    filesModifiedCount: 0,
+    filesModified: [],
+    subagentsInvoked: 0,
+    webRequests: 0,
+    analyzedImages: 0,
+    totalToolCalls: 0
+  };
+
+  if (!sqliteBin || !dbPath || !fs.existsSync(dbPath)) return result;
+
+  const effectiveAntigravityDir = antigravityDir || path.dirname(path.dirname(dbPath));
+  const effectiveCId = cId || path.basename(dbPath, '.db');
+
+  try {
+    const qCounts = "SELECT " +
+      "count(CASE WHEN step_type = 14 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 THEN 1 END), " +
+      "count(CASE WHEN step_type = 132 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 AND instr(cast(step_payload as text), 'run_command') > 0 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 AND instr(cast(step_payload as text), 'invoke_subagent') > 0 THEN 1 END), " +
+      "count(CASE WHEN step_type = 15 AND (instr(cast(step_payload as text), 'read_url_content') > 0 OR instr(cast(step_payload as text), 'search_web') > 0) THEN 1 END), " +
+      "count(CASE WHEN instr(cast(step_payload as text), 'image/') > 0 OR instr(cast(step_payload as text), 'browser_screenshot') > 0 THEN 1 END) " +
+      "FROM steps;";
+
+    const outCounts = execFileSync(sqliteBin, [dbPath, qCounts], { encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    if (outCounts) {
+      const parts = outCounts.split('|').map(n => parseInt(n, 10) || 0);
+      result.userPrompts = parts[0] || 0;
+      result.assistantResponses = parts[1] || 0;
+      result.totalToolCalls = parts[2] || 0;
+      result.executedCommands = parts[3] || 0;
+      result.subagentsInvoked = parts[4] || 0;
+      result.webRequests = parts[5] || 0;
+      result.analyzedImages = parts[6] || 0;
+    }
+
+    const qFiles = "SELECT cast(step_payload as text) FROM steps WHERE (step_type = 15 OR step_type = 132) AND (" +
+      "instr(cast(step_payload as text), 'view_file') > 0 OR " +
+      "instr(cast(step_payload as text), 'read_file') > 0 OR " +
+      "instr(cast(step_payload as text), 'replace_file_content') > 0 OR " +
+      "instr(cast(step_payload as text), 'write_to_file') > 0" +
+    ");";
+
+    const outFiles = execFileSync(sqliteBin, [dbPath, qFiles], { encoding: 'utf8', maxBuffer: 50 * 1024 * 1024, timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] });
+    const readSet = new Set();
+    const modSet = new Set();
+    const pathRegex = /"(?:AbsolutePath|TargetFile|filePath|file_path|target_file)":\s*"([^"]+)"/g;
+
+    for (const chunk of outFiles.split('\n')) {
+      if (!chunk) continue;
+      const isRead = chunk.includes('view_file') || chunk.includes('read_file');
+      const isMod = chunk.includes('replace_file_content') || chunk.includes('write_to_file');
+      let match;
+      while ((match = pathRegex.exec(chunk)) !== null) {
+        const raw = match[1].replace(/\\\\/g, '\\');
+        const p = path.normalize(raw);
+        if (isRead) readSet.add(p);
+        if (isMod) modSet.add(p);
+      }
+    }
+
+    result.filesRead = Array.from(readSet);
+    result.filesReadCount = readSet.size;
+    result.filesModified = Array.from(modSet);
+    result.filesModifiedCount = modSet.size;
+
+    let userUpImages = 0;
+    if (effectiveAntigravityDir && effectiveCId) {
+      const userUpDir = path.join(effectiveAntigravityDir, 'brain', effectiveCId, '.user_uploaded');
+      if (fs.existsSync(userUpDir)) {
+        try {
+          userUpImages = fs.readdirSync(userUpDir).filter(f => !f.startsWith('.')).length;
+        } catch { }
+      }
+    }
+    if (userUpImages > result.analyzedImages) {
+      result.analyzedImages = userUpImages;
+    }
+
+    if (result.totalToolCalls === 0) {
+      result.totalToolCalls = result.executedCommands + result.subagentsInvoked + result.webRequests + result.filesRead.length + result.filesModified.length;
+    }
+
+  } catch {
+    // Graceful fallback if table does not exist or database locked
+  }
+
+  return result;
+}
+
 // Reads only the turns that were added since `prior` (when supplied), so an unchanged or
 // already-seen conversation costs a single bounded query instead of a full re-parse.
-function analyzeConversation(dbPath, sqliteBin, prior) {
+function analyzeConversation(dbPath, sqliteBin, prior, antigravityDir, cId) {
   const incremental = Boolean(prior && typeof prior.lastIdx === 'number' && prior.lastIdx >= 0);
+  const effectiveAntigravityDir = antigravityDir || (dbPath ? path.dirname(path.dirname(dbPath)) : null);
+  const effectiveCId = cId || (dbPath ? path.basename(dbPath, '.db') : null);
 
   let lines = [];
   if (incremental) {
@@ -1024,7 +1223,7 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     const s = res.structural;
     // Rows deleted, or the table rewritten with lower indices: rebuild from scratch.
     if (s && (s.count < (prior.totalRows || 0) || s.maxIdx < prior.lastIdx)) {
-      return analyzeConversation(dbPath, sqliteBin, null);
+      return analyzeConversation(dbPath, sqliteBin, null, effectiveAntigravityDir, effectiveCId);
     }
     lines = res.rows;
   } else {
@@ -1038,7 +1237,15 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     if (lines.length === 0) return null;
   }
 
-  if (lines.length === 0) return prior; // DB touched but nothing new to parse
+  if (lines.length === 0) {
+    if (prior && (!prior.activity || prior.activity.assistantResponses === 0)) {
+      prior.activity = extractSessionActivity(dbPath, sqliteBin, effectiveAntigravityDir, effectiveCId);
+      if (prior.activity.assistantResponses === 0 && prior.calls > 0) {
+        prior.activity.assistantResponses = prior.calls;
+      }
+    }
+    return prior; // DB touched but nothing new to parse
+  }
 
   // Running state, seeded from the previous analysis when we are only reading new turns.
   let totalNonCached = incremental ? prior.totalNonCached : 0;
@@ -1237,6 +1444,11 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
   const avgThinking = calls > 0 ? Math.round(totalThinking / calls) : 0;
   const avgCached = calls > 0 ? Math.round(totalCached / calls) : 0;
 
+  const activity = extractSessionActivity(dbPath, sqliteBin, effectiveAntigravityDir, effectiveCId);
+  if (activity.assistantResponses === 0 && calls > 0) {
+    activity.assistantResponses = calls;
+  }
+
   return {
     calls,
     modelName,
@@ -1276,6 +1488,7 @@ function analyzeConversation(dbPath, sqliteBin, prior) {
     cacheHitRate: calls > 0 ? ((cacheHits / calls) * 100).toFixed(1) : '0.0',
     cacheVolumeRate: totalInput > 0 ? ((totalCached / totalInput) * 100).toFixed(1) : '0.0',
     thinkingRate: totalOutput > 0 ? ((totalThinking / totalOutput) * 100).toFixed(1) : '0.0',
+    activity,
     contextTimeline
   };
 }
@@ -1297,7 +1510,7 @@ function getDirSize(dir) {
 }
 
 function findRootForConversation(id) {
-  const roots = getInstallationRoots('both');
+  const roots = getInstallationRoots('all');
   for (const r of roots) {
     if (fs.existsSync(path.join(r.convDir, `${id}.db`))) {
       return r;
@@ -1518,12 +1731,22 @@ function withLatestTimeline(stats) {
   return { ...stats, contextTimeline: timeline.concat([latest]) };
 }
 
-// Picks the conversation the footer should describe. Prefers a human chat so a background worker
-// finishing later cannot take over the status bar; falls back to the first entry only when the
-// list contains nothing but subagents.
+// Picks the conversation the footer should describe.
+// 1. Running editor/IDE chat always takes top priority
+// 2. Running CLI agent comes second
+// 3. Most recent idle editor/IDE chat
+// 4. Any other non-subagent, then fallback to first
 function selectActiveConversation(conversations) {
   if (!conversations || conversations.length === 0) return null;
-  return conversations.find(c => !c.isSubagent) || conversations[0];
+  const runningHost = conversations.find(c => !c.isSubagent && c.isRunning && c.source !== 'cli');
+  if (runningHost) return runningHost;
+  const running = conversations.find(c => !c.isSubagent && c.isRunning);
+  if (running) return running;
+  const hostChat = conversations.find(c => !c.isSubagent && c.source !== 'cli');
+  if (hostChat) return hostChat;
+  const anyNonSubagent = conversations.find(c => !c.isSubagent);
+  if (anyNonSubagent) return anyNonSubagent;
+  return conversations[0];
 }
 
 // WAL/SHM sidecar signature, or '' when Antigravity is not holding the DB open.
@@ -1541,11 +1764,12 @@ function walSignatureOf(dbPath) {
 function readAllTelemetry(options = {}) {
   const force = Boolean(options && options.force);
   if (force) {
-    summariesCache = { mtimeMs: 0, size: 0, walSignature: '', map: null };
+    summariesCaches.clear();
     vscdbCache = { mtimeMs: 0, size: 0, map: null };
   }
   const dataSource = (options && options.dataSource) || currentDataSource;
-  const roots = getInstallationRoots(dataSource, options && options.hostEditor);
+  const hostEditor = options && options.hostEditor;
+  const roots = getInstallationRoots(dataSource, hostEditor);
   const sqliteBin = getSqliteBinary();
 
   // A missing CLI is reported explicitly so the UI can say so, rather than showing "no chats".
@@ -1553,27 +1777,50 @@ function readAllTelemetry(options = {}) {
     return { conversations: [], active: null, catalogAvailable: false, sqliteAvailable: false };
   }
 
+  // In auto mode, include cliRoot if it exists and is not already part of roots
+  const isAuto = dataSource === 'auto';
+  if (isAuto) {
+    const userHome = os.homedir();
+    const cliDir = path.join(userHome, '.gemini', 'antigravity-cli');
+    if (fs.existsSync(cliDir) && !roots.some(r => r.id === 'cli')) {
+      roots.push({
+        id: 'cli',
+        name: 'Antigravity CLI',
+        antigravityDir: cliDir,
+        convDir: path.join(cliDir, 'conversations'),
+        summariesDb: path.join(cliDir, 'conversation_summaries.db'),
+        stateVscdb: null
+      });
+    }
+  }
+
   let overallCatalogAvailable = false;
-  const catalog = {};
+  const catalogsByRoot = new Map();
+  const catalogAvailableByRoot = new Map();
 
   for (const root of roots) {
-    let rootCatalog = null;
+    let rootCatalog = {};
+    let rootAvailable = false;
     if (root.summariesDb && fs.existsSync(root.summariesDb)) {
-      rootCatalog = getConversationSummaries(root.summariesDb, sqliteBin);
-      if (rootCatalog !== null) {
+      const summaries = getConversationSummaries(root.summariesDb, sqliteBin);
+      if (summaries !== null) {
+        rootAvailable = true;
         overallCatalogAvailable = true;
-        Object.assign(catalog, rootCatalog);
+        Object.assign(rootCatalog, summaries);
       }
     }
     if (root.stateVscdb && fs.existsSync(root.stateVscdb)) {
       const vscdbMap = getVscdbSummaries(root.stateVscdb, sqliteBin);
       if (vscdbMap !== null) {
+        rootAvailable = true;
         overallCatalogAvailable = true;
         for (const [id, s] of Object.entries(vscdbMap)) {
-          if (!catalog[id]) catalog[id] = s;
+          if (!rootCatalog[id]) rootCatalog[id] = s;
         }
       }
     }
+    catalogsByRoot.set(root.id, rootCatalog);
+    catalogAvailableByRoot.set(root.id, rootAvailable);
   }
 
   const catalogAvailable = overallCatalogAvailable;
@@ -1645,7 +1892,7 @@ function readAllTelemetry(options = {}) {
     if (entry && !changed && !force) {
       stats = entry.stats; // zero sqlite3 spawns
     } else {
-      stats = analyzeConversation(fullPath, sqliteBin, (shrank || force) ? null : (entry ? entry.stats : null));
+      stats = analyzeConversation(fullPath, sqliteBin, (shrank || force) ? null : (entry ? entry.stats : null), root.antigravityDir, cId);
       if (!stats && entry) stats = entry.stats; // keep the last good reading
       if (!stats) continue;
       analysisCache.set(cId, {
@@ -1676,7 +1923,9 @@ function readAllTelemetry(options = {}) {
     }
 
     const storageBytes = cacheEntry.storageBytes || 0;
-    const hasSummary = Boolean(catalog[cId]);
+    const rootCatalog = catalogsByRoot.get(root.id) || {};
+    const rootCatalogAvail = Boolean(catalogAvailableByRoot.get(root.id));
+    const hasSummary = Boolean(rootCatalog[cId]);
 
     // Fallback: in-db metadata extraction for active or uncataloged chats
     let inDbMeta = cacheEntry.inDbMetadata;
@@ -1695,7 +1944,7 @@ function readAllTelemetry(options = {}) {
     let isOrphan = false;
 
     if (hasSummary) {
-      summary = catalog[cId];
+      summary = rootCatalog[cId];
       isOrphan = false;
     } else if (isRecentlyActive || (inDbMeta && inDbMeta.workspacePaths && inDbMeta.workspacePaths.length > 0)) {
       summary = {
@@ -1712,13 +1961,14 @@ function readAllTelemetry(options = {}) {
         agentRole: '',
         isSubagent: false,
         killed: false,
-        source: root.id
+        source: root.id,
+        isRunning: hasActiveWal
       };
       isOrphan = false;
     } else {
       summary = {
         id: cId,
-        title: catalogAvailable ? 'Dead Ghost Chat (Deleted in Antigravity)' : 'Untitled Conversation (catalog unreadable)',
+        title: rootCatalogAvail ? 'Dead Ghost Chat (Deleted in Antigravity)' : 'Untitled Conversation (catalog unreadable)',
         stepCount: 0,
         lastModified: stat.mtime.toISOString(),
         workspaceUris: (inDbMeta && inDbMeta.workspaceUris) || '',
@@ -1726,10 +1976,10 @@ function readAllTelemetry(options = {}) {
         workspaceName: (inDbMeta && inDbMeta.workspaceName) || '',
         source: root.id
       };
-      isOrphan = catalogAvailable;
+      isOrphan = rootCatalogAvail;
     }
 
-    convStatsList.push({
+    const convItem = {
       ...summary,
       isOrphan,
       storageBytes,
@@ -1738,7 +1988,10 @@ function readAllTelemetry(options = {}) {
       source: root.id,
       rootDir: root.antigravityDir,
       stats: withLatestTimeline(stats)
-    });
+    };
+
+
+    convStatsList.push(convItem);
   }
 
   // Drop cache entries for conversations that no longer exist.
@@ -1746,6 +1999,15 @@ function readAllTelemetry(options = {}) {
     if (!seen.has(key)) {
       analysisCache.delete(key);
       cacheIsDirty = true;
+    }
+  }
+
+  // Backfill parentTitle across merged catalogs if missing
+  const allById = new Map(convStatsList.map(c => [c.id, c]));
+  for (const c of convStatsList) {
+    if (c.parentConversationId && !c.parentTitle) {
+      const p = allById.get(c.parentConversationId);
+      if (p) c.parentTitle = p.title;
     }
   }
 
@@ -1789,6 +2051,9 @@ module.exports = {
   parseVscdbTrajectorySummaries,
   extractInDbWorkspaces,
   extractInDbPrompt,
-  extractInDbMetadata
+  extractInDbMetadata,
+  getConversationSummaries,
+  findRootForConversation,
+  extractSessionActivity
 };
 

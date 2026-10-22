@@ -2,7 +2,7 @@
   "name": "antigravity-telemetry",
   "displayName": "Antigravity Telemetry - Context & Token Monitor",
   "description": "Live context window usage, prompt cache hit rate, and token intelligence for Antigravity",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "publisher": "HarshMann",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -63,16 +63,18 @@
             "auto",
             "ide",
             "extension",
-            "both"
+            "cli",
+            "all"
           ],
           "enumDescriptions": [
-            "Automatically detect based on active editor: Antigravity IDE when in IDE, Antigravity Extension when in VS Code",
+            "Automatically detect based on active editor (Antigravity IDE or VS Code Extension) and include matching or running Antigravity CLI sessions",
             "Antigravity IDE standalone application (~/.gemini/antigravity-ide)",
             "Antigravity Extension in VS Code (~/.gemini/antigravity)",
-            "Show conversations from both Antigravity IDE and Antigravity Extension"
+            "Antigravity CLI terminal sessions (~/.gemini/antigravity-cli)",
+            "Merge conversations from all sources (Antigravity IDE, Extension, and CLI)"
           ],
           "default": "auto",
-          "markdownDescription": "Source of Antigravity telemetry: 'auto' (detects active editor: Antigravity IDE when in IDE, Antigravity Extension when in VS Code), 'ide' (Antigravity IDE standalone), 'extension' (Antigravity Extension in VS Code), or 'both' (merges both environments)."
+          "markdownDescription": "Source of Antigravity telemetry: 'auto' (detects active editor and matching/running CLI sessions), 'cli' (Antigravity CLI terminal sessions), 'ide' (Antigravity IDE standalone), 'extension' (Antigravity Extension in VS Code), or 'all' (merges all sources)."
         },
         "antigravity.enableCache": {
           "type": "boolean",

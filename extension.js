@@ -1,6 +1,7 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const {
   readAllTelemetry,
   getInstallationRoots,
@@ -204,8 +205,12 @@ function updateTelemetry(options = {}) {
     const cfg = getConfig();
     const hostEditor = getDetectedEditorEnvironment();
     setCustomSqlitePath(cfg.sqlitePath);
-    setDataSource(cfg.dataSource);
-    telemetryState = readAllTelemetry({ dataSource: cfg.dataSource, hostEditor, force });
+    telemetryState = readAllTelemetry({
+      dataSource: cfg.dataSource,
+      hostEditor,
+      force,
+      currentWorkspaceFolders: getCurrentWorkspaceFolders()
+    });
 
     if (telemetryState.sqliteAvailable === false) {
       if (!sqliteWarningLogged) {
@@ -387,8 +392,12 @@ function updateStatusBar() {
 
   const wsBadge = active.workspaceName ? ` \`[${active.workspaceName}]\`` : '';
   const agentPrefix = active.isSubagent ? `$(hubot) [${active.agentName || 'subagent'}] ` : '';
+  const sourceName = active.source === 'cli' ? 'Antigravity CLI' : (active.source === 'ide' ? 'Antigravity IDE' : (active.source === 'extension' ? 'Antigravity Extension' : ''));
 
   md.appendMarkdown(`**${agentPrefix}${active.title}**${wsBadge}\n\n`);
+  if (sourceName) {
+    md.appendMarkdown(`* **Source:** ${sourceName}\n`);
+  }
   md.appendMarkdown(`* **Context Usage:** \`${shortContext} / ${limitStr}\` (${contextPct}%)\n`);
   md.appendMarkdown(`* **Window Meter:** \`[${progressBar}]\`\n`);
   md.appendMarkdown(`* **Cache Read:** **${formatTokens(s.totalCached)}** (${s.cacheVolumeRate}% vol · ${s.cacheHitRate}% hits)\n`);
@@ -481,11 +490,11 @@ async function showMenu() {
   const currentSourceSetting = getConfig().dataSource;
   const activeSourceName = currentSourceSetting === 'auto'
     ? `Auto (${host === 'ide' ? 'Antigravity IDE' : 'Antigravity Extension'})`
-    : (currentSourceSetting === 'ide' ? 'Antigravity IDE' : (currentSourceSetting === 'extension' ? 'Antigravity Extension' : 'Both (Merged)'));
+    : (currentSourceSetting === 'cli' ? 'Antigravity CLI' : (currentSourceSetting === 'ide' ? 'Antigravity IDE' : (currentSourceSetting === 'extension' ? 'Antigravity Extension' : 'All Sources (Merged)')));
 
   items.push({
     label: `$(database) Data Source: ${activeSourceName}...`,
-    description: 'Switch data source between Antigravity IDE, Antigravity Extension, or Both',
+    description: 'Switch data source between Auto, CLI, IDE, Extension, or All Sources',
     action: 'switchDataSource'
   });
 
@@ -541,9 +550,14 @@ async function promptSwitchDataSource() {
   const host = getDetectedEditorEnvironment();
   const options = [
     {
-      label: `${current === 'auto' ? '$(check) ' : ''}Auto (Active Editor)`,
-      description: `Automatically loads ${host === 'ide' ? 'Antigravity IDE' : 'Antigravity Extension'} based on the current window`,
+      label: `${current === 'auto' ? '$(check) ' : ''}Auto (Active Editor & Active CLI)`,
+      description: `Automatically loads ${host === 'ide' ? 'Antigravity IDE' : 'Antigravity Extension'} and matching or running CLI sessions`,
       value: 'auto'
+    },
+    {
+      label: `${current === 'cli' ? '$(check) ' : ''}Antigravity CLI`,
+      description: 'Show conversations from Antigravity CLI terminal sessions (~/.gemini/antigravity-cli)',
+      value: 'cli'
     },
     {
       label: `${current === 'ide' ? '$(check) ' : ''}Antigravity IDE`,
@@ -556,9 +570,9 @@ async function promptSwitchDataSource() {
       value: 'extension'
     },
     {
-      label: `${current === 'both' ? '$(check) ' : ''}Both (Merged)`,
-      description: 'Merge conversations from both Antigravity IDE and Antigravity Extension',
-      value: 'both'
+      label: `${current === 'all' ? '$(check) ' : ''}All Sources (Merged)`,
+      description: 'Merge conversations from all sources (Antigravity IDE, Extension, and CLI)',
+      value: 'all'
     }
   ];
 
@@ -584,18 +598,20 @@ async function showHistoryPicker() {
   }
 
   const active = getActiveConversation();
+  const hasMultiple = new Set(convs.map(x => x.source).filter(Boolean)).size > 1;
   const items = convs.map(c => {
     const s = c.stats;
     const isAct = active && active.id === c.id;
     const badge = isAct ? ' (ACTIVE)' : '';
     const wsBadge = c.workspaceName ? ` [${c.workspaceName}]` : '';
     const dateStr = c.lastModified ? new Date(c.lastModified).toLocaleString() : '';
+    const srcPrefix = hasMultiple && c.source ? (c.source === 'cli' ? '[CLI] ' : (c.source === 'ide' ? '[IDE] ' : '[Ext] ')) : '';
 
     const prefix = c.isSubagent ? `[${c.agentName || 'subagent'}] ` : '';
-    const icon = c.isSubagent ? '$(hubot)' : '$(comment-discussion)';
+    const icon = c.isSubagent ? '$(hubot)' : (c.source === 'cli' ? '$(terminal)' : '$(comment-discussion)');
 
     return {
-      label: `${icon} ${prefix}${c.title || 'Untitled'}${wsBadge}${badge}`,
+      label: `${icon} ${srcPrefix}${prefix}${c.title || 'Untitled'}${wsBadge}${badge}`,
       description: `${formatTokens(s ? s.grandTotal : 0)} tok · ${s ? s.cacheHitRate : 0}% cache · ${s ? s.calls : 0} calls`,
       detail: `Peak Context: ${formatTokens(s ? s.peakContext : 0)} | Last Active: ${dateStr}`,
       convId: c.id
@@ -622,16 +638,18 @@ async function promptDeleteConversation() {
   }
 
   const active = getActiveConversation();
+  const hasMultiple = new Set(convs.map(x => x.source).filter(Boolean)).size > 1;
   const items = convs.map(c => {
     const s = c.stats;
     const isAct = active && active.id === c.id;
     const badge = isAct ? ' (ACTIVE)' : '';
     const wsBadge = c.workspaceName ? ` [${c.workspaceName}]` : '';
     const dateStr = c.lastModified ? new Date(c.lastModified).toLocaleString() : '';
+    const srcPrefix = hasMultiple && c.source ? (c.source === 'cli' ? '[CLI] ' : (c.source === 'ide' ? '[IDE] ' : '[Ext] ')) : '';
     const prefix = c.isSubagent ? `[${c.agentName || 'subagent'}] ` : '';
 
     return {
-      label: `$(trash) ${prefix}${c.title || 'Untitled'}${wsBadge}${badge}`,
+      label: `$(trash) ${srcPrefix}${prefix}${c.title || 'Untitled'}${wsBadge}${badge}`,
       description: `${c.storageMB} MB · ${formatTokens(s ? s.grandTotal : 0)} tok`,
       detail: `ID: ${c.id} | Last Active: ${dateStr}`,
       convId: c.id,
@@ -710,6 +728,8 @@ function openDashboard(selectedConvId) {
   const iconUri = mediaRoot ? currentPanel.webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, 'icon.png')).toString() : '';
   const nonce = Date.now().toString(36) + Math.random().toString(36).slice(2);
 
+  const pkgVersion = (extensionContext && extensionContext.extension && extensionContext.extension.packageJSON ? extensionContext.extension.packageJSON.version : '') || require('./package.json').version || '1.2.0';
+
   currentPanel.webview.html = getDashboardHtml(
     prepareConversationsForWebview(telemetryState.conversations, targetId),
     targetId,
@@ -717,6 +737,7 @@ function openDashboard(selectedConvId) {
       cssUri,
       iconUri,
       nonce,
+      version: pkgVersion,
       cspSource: currentPanel.webview.cspSource,
       deleteToRecycleBin: getConfig().deleteToRecycleBin,
       workspaceFilter: getConfig().workspaceFilter,
@@ -738,17 +759,17 @@ function openDashboard(selectedConvId) {
       }
     } else if (message.command === 'refresh') {
       updateTelemetry({ force: true });
-    } else if (message.command === 'selectConversation') {
-      activeWebviewConvId = message.conversationId;
-    } else if (message.command === 'getTimeline') {
+    } else if (message.command === 'selectConversation' || message.command === 'getTimeline') {
       activeWebviewConvId = message.conversationId;
       const conv = telemetryState.conversations.find(c => c.id === message.conversationId);
       const timeline = (conv && conv.stats && conv.stats.contextTimeline) ? conv.stats.contextTimeline : [];
+      const activity = (conv && conv.stats && conv.stats.activity) ? conv.stats.activity : null;
       if (currentPanel && currentPanel.visible) {
         currentPanel.webview.postMessage({
           type: 'timelineData',
           conversationId: message.conversationId,
-          timeline
+          timeline,
+          activity
         });
       }
     }
@@ -800,6 +821,13 @@ function activate(context) {
     activeWatchers = [];
 
     const roots = getInstallationRoots(getConfig().dataSource, getDetectedEditorEnvironment());
+    const ds = getConfig().dataSource;
+    if ((ds === 'auto' || ds === 'all' || ds === 'cli') && !roots.some(r => r.id === 'cli')) {
+      const cliRoots = getInstallationRoots('cli');
+      if (cliRoots.length > 0) {
+        roots.push(cliRoots[0]);
+      }
+    }
 
     for (const root of roots) {
       // Conversation databases change on every turn. If Antigravity keeps a WAL open the write

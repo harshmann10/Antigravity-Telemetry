@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.2.0] - 2026-10-22
+
+### 🩺 Context Health Diagnostics, Codebase Activity & Multi-Root CLI Support
+
+> **Major milestone release** introducing deep Context Health Diagnostics, tool execution footprints, real-time files touched drawer search, multi-root Antigravity CLI detection, and granular subagent controls.
+
+#### 🩺 Context Health Diagnostics & Segmented Allocation
+- **Hero Capacity & Headroom Bar**: Real-time display showing used context percentage, absolute tokens consumed, and remaining token headroom before reaching the 256k working ceiling.
+- **Tri-State Status Badge**: Dynamic health indicator shifting automatically between `Healthy` (< 60%), `Moderate Load` (60–85%), and `Compaction Alert` (> 85%).
+- **Segmented Context Allocation Meter**: Visual multi-color bar detailing context distribution across Prompts (Blue), Assistant Responses (Purple), Codebase Files (Cyan), Executed Commands (Emerald), Analyzed Images (Amber), and Free Headroom (Dark Zinc).
+- **Consolidated Footprint Cards**: Replaced redundant metrics with 4 high-density footprint cards tracking Assistant Output, Codebase Files in memory, Commands executed, and Images analyzed.
+
+#### 📁 Files Touched Drawer & Instant Search
+- **Instant Client-Side Filtering**: Interactive search input inside the Files Touched drawer filtering inspected and modified files in real time.
+- **Color-Coded File Extension Badges**: Visual pill badges for `.js`, `.ts`, `.py`, `.json`, `.md`, `.css`, and other common project extensions.
+- **Background Tick State Preservation**: Filter queries and drawer contents are preserved in memory across 10-second background polling ticks without flickering or resetting.
+
+#### ⚡ Cache Acceleration & Trajectory Dynamics
+- **Effective Latency Multiplier**: Computes real-world speedup (`~X.Xx faster`) powered by Antigravity's prompt caching architecture.
+- **Net Trajectory Growth Indicator**: Dynamically highlights token delta relative to session minimum (`+X.Xk tok net`).
+- **Last Turn Execution Summary**: Instant visibility into the latest turn index, fresh prompt delta, generated tokens, and compaction state.
+
+#### 💻 Antigravity CLI Discovery & Multi-Root Parity
+- **Native CLI Storage Discovery**: Automatically detects and reads active sessions, transcripts, and SQLite stores from `~/.gemini/antigravity-cli`.
+- **Intelligent 4-Tier Session Priority**: Implemented anti-hijacking hierarchy (`runningHost > runningCli > idleHost > idleCli`) guaranteeing background terminal jobs never displace active VS Code / IDE focus mid-session.
+- **Dropdown `<optgroup>` Segmentation**: Session selector dynamically categorizes entries into `Editor Sessions` and `CLI Terminal Runs` when multiple sources exist.
+- **Seamless All Workspaces Parity**: Switching to "All Workspaces" now aggregates both host and CLI runs across all projects without premature backend pruning.
+- **Permanent Origin Badges**: Visual `CLI`, `IDE`, and `Ext` badges remain permanently visible across the UI, even when viewing filtered or single-source views.
+- **Flexible Data Source Routing**: Choose between `auto`, `cli`, `ide`, `extension`, or merged `all` mode.
+
+#### 🤖 Nested Subagent Collapse Controls
+- **Node-Level Collapse/Expand**: Individual chevron controls on subagents that spawn child workers, preventing UI clutter in deep delegation workflows.
+- **Orphan Subagent Fix**: Multi-tiered catalog fallback ensures nested subagents correctly resolve their parent relationships across all views.
+
+---
+
 ## [1.1.1] - 2026-10-15
 
 ### ⚡ Remote SSH Bandwidth Optimization & Local Storage Architecture
@@ -47,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### 🗑️ Multi-Root Storage Hygiene
 - **Root-Aware Cleanup**: Enhanced safe deletion to wipe all 7 storage layers across either installation with Windows Recycle Bin protection by default.
-- **Open VSX Availability**: Published officially on the [Open VSX Registry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry) for VSCodium, Gitpod, and Coder users.
+- **Open VSX Availability**: Published officially on the [Open VSX Registry](https://open-vsx.org/extension/HarshMann/antigravity-telemetry) for Antigravity IDE, VSCodium, and Coder users.
 
 
 ---

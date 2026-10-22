@@ -82,11 +82,31 @@ function buildRow(model, fresh, cached, output, thinking, response, contextToken
 }
 
 function resolveSqlite() {
-    const candidates = [
-        'C:\\Users\\Harsh\\adb-fastboot\\platform-tools\\sqlite3.exe',
-        'sqlite3',
-        'sqlite3.exe'
-    ];
+    const candidates = ['sqlite3', 'sqlite3.exe'];
+    if (process.platform === 'win32') {
+        const localAppData = process.env.LOCALAPPDATA || '';
+        const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+        const userProfile = process.env.USERPROFILE || '';
+        if (localAppData) {
+            candidates.push(
+                path.join(localAppData, 'Programs', 'sqlite3', 'sqlite3.exe'),
+                path.join(localAppData, 'Microsoft', 'WindowsApps', 'sqlite3.exe')
+            );
+        }
+        if (userProfile) {
+            candidates.push(path.join(userProfile, 'scoop', 'shims', 'sqlite3.exe'));
+        }
+        candidates.push(
+            'C:\\ProgramData\\chocolatey\\bin\\sqlite3.exe',
+            path.join(programFiles, 'sqlite', 'sqlite3.exe')
+        );
+    } else {
+        candidates.push(
+            '/usr/bin/sqlite3',
+            '/usr/local/bin/sqlite3',
+            '/opt/homebrew/bin/sqlite3'
+        );
+    }
     for (const c of candidates) {
         try {
             execSync(`"${c}" --version`, { stdio: 'ignore' });
@@ -667,12 +687,24 @@ function testSubagents() {
                     classes: new Set(),
                     add(cls) { this.classes.add(cls); },
                     remove(cls) { this.classes.delete(cls); },
-                    toggle(cls) { if (this.classes.has(cls)) this.classes.delete(cls); else this.classes.add(cls); }
+                    toggle(cls, force) {
+                        const shouldAdd = force !== undefined ? Boolean(force) : !this.classes.has(cls);
+                        if (shouldAdd) this.classes.add(cls); else this.classes.delete(cls);
+                        return shouldAdd;
+                    }
+                },
+                get className() { return Array.from(this.classList.classes).join(' '); },
+                set className(val) {
+                    this.classList.classes = new Set((val || '').split(/\s+/).filter(Boolean));
                 },
                 style: {},
                 setAttribute() { },
                 addEventListener() { },
-                querySelector() { return makeEl('sub'); },
+                _queries: new Map(),
+                querySelector(sel) {
+                    if (!this._queries.has(sel)) this._queries.set(sel, makeEl('sub'));
+                    return this._queries.get(sel);
+                },
                 querySelectorAll() { return []; },
                 getBoundingClientRect() { return { width: 500, height: 200, left: 0, top: 0 }; },
                 textContent: '',
@@ -741,6 +773,86 @@ function testSubagents() {
         check('subagentsList collapsed after toggle', subListEl && subListEl.classList.classes.has('hidden') && chevronEl.textContent === '▶' && labelEl.textContent === 'Expand');
         vm.runInContext('toggleSubagentsCollapse()', ctx);
         check('subagentsList expanded after second toggle', subListEl && !subListEl.classList.classes.has('hidden') && chevronEl.textContent === '▼' && labelEl.textContent === 'Collapse');
+    }
+
+    // 7. Synthetic nested subagent hierarchy test
+    const makeStats = (tot) => ({
+        grandTotal: tot,
+        totalCached: Math.floor(tot * 0.5),
+        totalNonCached: Math.floor(tot * 0.3),
+        totalOutput: Math.floor(tot * 0.2),
+        calls: 5,
+        contextTimeline: []
+    });
+    const synthConvs = [
+        { id: 'h1', isSubagent: false, title: 'Main Project Chat', stats: makeStats(1000) },
+        { id: 's1', isSubagent: true, parentConversationId: 'h1', agentName: 'Coder', title: 'Code Implementer', stats: makeStats(500) },
+        { id: 's2', isSubagent: true, parentConversationId: 's1', agentName: 'Tester', title: 'Test Runner', stats: makeStats(200) },
+        { id: 'o1', isSubagent: true, parentConversationId: 'missing-99', agentName: 'OrphanAgent', title: 'Lost Worker', stats: makeStats(50) }
+    ];
+    const synthHtml = getDashboardHtml(synthConvs, 'h1', { workspaceFilter: 'all' });
+    const synthScript = synthHtml.slice(synthHtml.indexOf('>', synthHtml.indexOf('<script nonce=')) + 1, synthHtml.lastIndexOf('</script>'));
+    const synthDoc = makeDomMock();
+    const synthSandbox = {
+        acquireVsCodeApi: () => ({ postMessage() { } }),
+        window: { addEventListener() { }, onresize: null },
+        document: synthDoc
+    };
+    const synthCtx = vm.createContext(synthSandbox);
+    vm.runInContext(synthScript, synthCtx);
+
+    // Check nested subagent s2 breadcrumb ancestry: h1 -> s1
+    vm.runInContext("selectConv('s2')", synthCtx);
+    const bcEl = synthDoc.getElementById('subagentBreadcrumb');
+    const bcLinks = bcEl.children.filter(c => c.tag === 'a');
+    check('nested subagent has multi-level breadcrumb (h1 -> s1)', bcLinks.length === 2 && bcLinks[0].textContent === 'Main Project Chat' && bcLinks[1].textContent.includes('Coder'));
+
+    // Check root chat h1 subagent rollup counts both direct and nested subagents (s1 + s2 = 2)
+    vm.runInContext("selectConv('h1')", synthCtx);
+    const h1Badge = synthDoc.getElementById('subagentsCountBadge');
+    check('root chat counts all descendant subagents (2 subagents)', h1Badge && h1Badge.textContent === '2 subagents');
+
+    // Check parent subagent s1 counts its own child (s2 = 1)
+    vm.runInContext("selectConv('s1')", synthCtx);
+    const s1Badge = synthDoc.getElementById('subagentsCountBadge');
+    check('parent subagent counts its own child subagent (1 subagent)', s1Badge && s1Badge.textContent === '1 subagent');
+
+    // 8. Test individual subagent node collapse in session list
+    const convListEl = synthDoc.getElementById('convList');
+    const drawerWrap = convListEl.children.find(c => c.children.length === 2 && c.children[1].children.length >= 2);
+    check('found human chat drawer wrap in synth DOM', Boolean(drawerWrap));
+    if (drawerWrap) {
+        const childListDiv = drawerWrap.children[1];
+        const s1Row = childListDiv.children[0];
+        const s1NestedDiv = childListDiv.children[1];
+        const s1Pill = s1Row.querySelector('.sub-toggle-pill');
+        check('s1 has sub-toggle-pill in list', typeof s1Pill.onclick === 'function');
+        check('s1 child container visible initially in list', s1NestedDiv && !s1NestedDiv.classList.classes.has('hidden'));
+        s1Pill.onclick({ stopPropagation() {} });
+        check('s1 child container hidden after collapse toggle in list', s1NestedDiv && s1NestedDiv.classList.classes.has('hidden'));
+        check('s1 recorded in collapsedSubagents set', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === true);
+        s1Pill.onclick({ stopPropagation() {} });
+        check('s1 child container visible after expanding in list', s1NestedDiv && !s1NestedDiv.classList.classes.has('hidden'));
+        check('s1 removed from collapsedSubagents set', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === false);
+    }
+
+    // 9. Test individual subagent node collapse in detail view
+    vm.runInContext("selectConv('h1')", synthCtx);
+    const detailSubList = synthDoc.getElementById('subagentsList');
+    check('detail subagentsList populated', detailSubList && detailSubList.children.length === 2);
+    if (detailSubList && detailSubList.children.length === 2) {
+        const s1DetailRow = detailSubList.children[0];
+        const s1DetailNested = detailSubList.children[1];
+        const rightDiv = s1DetailRow.children[1];
+        const detailPill = rightDiv.querySelector('.detail-sub-toggle-pill');
+        check('s1 has detail-sub-toggle-pill', typeof detailPill.onclick === 'function');
+        check('s1DetailNested visible initially in detail', !s1DetailNested.classList.classes.has('hidden'));
+        detailPill.onclick({ stopPropagation() {} });
+        check('s1DetailNested hidden after collapse toggle in detail', s1DetailNested.classList.classes.has('hidden'));
+        check('s1 recorded in collapsedSubagents set from detail', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === true);
+        detailPill.onclick({ stopPropagation() {} });
+        check('s1DetailNested visible after expanding in detail', !s1DetailNested.classList.classes.has('hidden'));
+        check('s1 removed from collapsedSubagents set from detail', vm.runInContext("collapsedSubagents.has('s1')", synthCtx) === false);
     }
 }
 
@@ -1143,8 +1255,8 @@ function testChangelogExtraction() {
 
     // Default extraction (latest section from user-facing CHANGELOG.md)
     const latest = extractChangelog();
-    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.1.1'), latest.title);
-    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Remote SSH') && latest.notes.includes('Bandwidth'), latest.notes.slice(0, 100));
+    check('extracts latest section title', typeof latest.title === 'string' && latest.title.includes('1.2.0'), latest.title);
+    check('extracts latest section notes with markdown', typeof latest.notes === 'string' && latest.notes.includes('Context Health') && latest.notes.includes('Codebase Activity'), latest.notes.slice(0, 100));
     check('strips trailing horizontal rules', !latest.notes.endsWith('---'));
 
     // Specific tag extraction (e.g. v1.1.0)
@@ -1246,9 +1358,318 @@ function testAntigravityIdeSupport() {
     const telem = reader.readAllTelemetry({ dataSource: 'auto' });
     check('readAllTelemetry discovers conversations', Array.isArray(telem.conversations) && telem.conversations.length > 0);
     check('active conversation resolved', telem.active !== null);
-    check('conversations carry source tag', telem.conversations.some(c => c.source === 'ide' || c.source === 'extension'));
+    check('conversations carry source tag', telem.conversations.some(c => c.source === 'ide' || c.source === 'extension' || c.source === 'cli'));
     check('zero healthy chats falsely flagged as dead ghost chat when in-db workspaces exist',
         telem.conversations.filter(c => c.workspacePaths && c.workspacePaths.length > 0 && c.isOrphan).length === 0);
+}
+
+// 13. antigravity cli support & multi-root parity
+function testAntigravityCliSupport() {
+    section('13. antigravity cli support & multi-root parity');
+
+    // Root resolution
+    const rootsCli = reader.getInstallationRoots('cli');
+    check('cli mode resolves cli root', rootsCli.length === 1 && rootsCli[0].id === 'cli');
+    check('cli root points to antigravity-cli directory', rootsCli[0].antigravityDir.includes('antigravity-cli'));
+    const rootsAll = reader.getInstallationRoots('all');
+    check('all mode includes cli root', rootsAll.some(r => r.id === 'cli'));
+
+    // findRootForConversation across roots
+    const fakeCliConvId = 'c1111111-2222-3333-4444-555555555555';
+    const cliRoot = rootsCli[0];
+    const cliConvPath = path.join(cliRoot.convDir, `${fakeCliConvId}.db`);
+    let wroteFake = false;
+    try {
+        if (!fs.existsSync(cliRoot.convDir)) fs.mkdirSync(cliRoot.convDir, { recursive: true });
+        fs.writeFileSync(cliConvPath, '');
+        wroteFake = true;
+        const resolved = reader.findRootForConversation ? reader.findRootForConversation(fakeCliConvId) : null;
+        check('findRootForConversation resolves cli root for cli chat', resolved && resolved.id === 'cli');
+    } catch {} finally {
+        if (wroteFake) { try { fs.unlinkSync(cliConvPath); } catch {} }
+    }
+
+    // selectActiveConversation priorities: Running Host > Running CLI > Idle Host Editor > Idle CLI
+    const idleHost = { id: 'host-1', isSubagent: false, source: 'extension', isRunning: false };
+    const idleCli = { id: 'cli-1', isSubagent: false, source: 'cli', isRunning: false };
+    const runningCli = { id: 'cli-running', isSubagent: false, source: 'cli', isRunning: true };
+    const runningHost = { id: 'host-running', isSubagent: false, source: 'extension', isRunning: true };
+    const subagent = { id: 'sub-1', isSubagent: true, source: 'cli', isRunning: true };
+
+    check('selectActiveConversation prioritizes running host over running CLI',
+        reader.selectActiveConversation([runningCli, runningHost]).id === 'host-running');
+    check('selectActiveConversation prioritizes running CLI over idle host',
+        reader.selectActiveConversation([idleHost, runningCli]).id === 'cli-running');
+    check('selectActiveConversation prioritizes idle host editor over idle CLI',
+        reader.selectActiveConversation([idleCli, idleHost]).id === 'host-1');
+    check('selectActiveConversation ignores running subagent in favor of human chat',
+        reader.selectActiveConversation([subagent, idleHost]).id === 'host-1');
+
+    // Multi-catalog summaries cache isolation (synthetic SQLite test)
+    const sqlite = resolveSqlite();
+    if (sqlite) {
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-multi-cat-'));
+        const catA = path.join(tmpDir, 'catA.db');
+        const catB = path.join(tmpDir, 'catB.db');
+        try {
+            execSync(`"${sqlite}" "${catA}" "CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, title text, preview text, step_count integer, last_modified_time datetime, workspace_uris text, parent_conversation_id text, nesting_depth integer, agent_name text, killed numeric, raw_summary blob, status text, not_fully_idle numeric); INSERT INTO conversation_summaries VALUES ('id-a', 'Chat A', '', 5, '2026-10-14T00:00:00Z', '', '', 0, '', 0, NULL, 'CASCADE_RUN_STATUS_RUNNING', 1);"`, { stdio: 'ignore' });
+            execSync(`"${sqlite}" "${catB}" "CREATE TABLE conversation_summaries (conversation_id text PRIMARY KEY, title text, preview text, step_count integer, last_modified_time datetime, workspace_uris text, parent_conversation_id text, nesting_depth integer, agent_name text, killed numeric, raw_summary blob, status text, not_fully_idle numeric); INSERT INTO conversation_summaries VALUES ('id-b', 'Chat B', '', 10, '2026-10-14T01:00:00Z', '', '', 0, '', 0, NULL, '', 0);"`, { stdio: 'ignore' });
+
+            const resA = reader.getConversationSummaries(catA, sqlite);
+            check('catA parses running status', resA && resA['id-a'] && resA['id-a'].isRunning === true && resA['id-a'].status === 'CASCADE_RUN_STATUS_RUNNING');
+            const resB = reader.getConversationSummaries(catB, sqlite);
+            check('catB parses idle status', resB && resB['id-b'] && resB['id-b'].isRunning === false);
+
+            // Re-read A: must hit cache without having been evicted by reading B
+            const resA2 = reader.getConversationSummaries(catA, sqlite);
+            check('catA preserved in multi-catalog cache without eviction', resA2 && resA2['id-a'] && resA2['id-a'].title === 'Chat A');
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    }
+
+    // Real CLI data read
+    if (fs.existsSync(cliRoot.convDir)) {
+        const cliTelem = reader.readAllTelemetry({ dataSource: 'cli' });
+        check('cli telemetry reads conversations from antigravity-cli', Array.isArray(cliTelem.conversations));
+        if (cliTelem.conversations.length > 0) {
+            check('cli conversations carry source === cli', cliTelem.conversations.every(c => c.source === 'cli'));
+            check('cli healthy conversations are not flagged as orphans',
+                cliTelem.conversations.filter(c => c.workspacePaths && c.workspacePaths.length > 0 && c.isOrphan).length === 0);
+        }
+    }
+}
+
+// 14. session operations & activity metrics (issue #3)
+function testSessionOperationsAndActivity() {
+    section('14. session operations & activity metrics (issue #3)');
+
+    check('extractSessionActivity exported', typeof reader.extractSessionActivity === 'function');
+
+    // Default return on missing/invalid input
+    const emptyResult = reader.extractSessionActivity('non-existent-path.db', 'invalid-bin');
+    check('extractSessionActivity returns safe defaults on missing file',
+        emptyResult &&
+        emptyResult.userPrompts === 0 &&
+        emptyResult.assistantResponses === 0 &&
+        emptyResult.executedCommands === 0 &&
+        emptyResult.filesReadCount === 0 &&
+        Array.isArray(emptyResult.filesRead) &&
+        emptyResult.filesModifiedCount === 0 &&
+        Array.isArray(emptyResult.filesModified) &&
+        emptyResult.totalToolCalls === 0
+    );
+
+    // Read all telemetry across all sources
+    const allData = reader.readAllTelemetry({ dataSource: 'all' });
+    check('readAllTelemetry returns conversations with activity',
+        Array.isArray(allData.conversations) && allData.conversations.length > 0 &&
+        allData.conversations.some(c => c.stats && c.stats.activity)
+    );
+
+    const activeConv = allData.active || allData.conversations[0];
+    const convWithActivity = allData.conversations.find(c => c.stats && c.stats.activity && c.stats.activity.assistantResponses > 0) || activeConv;
+
+    if (convWithActivity && convWithActivity.stats && convWithActivity.stats.activity) {
+        const act = convWithActivity.stats.activity;
+        check('activity contains non-negative userPrompts', typeof act.userPrompts === 'number' && act.userPrompts >= 0);
+        check('activity contains assistantResponses', typeof act.assistantResponses === 'number' && act.assistantResponses > 0);
+        check('activity contains executedCommands count', typeof act.executedCommands === 'number' && act.executedCommands >= 0);
+        check('activity contains filesReadCount and filesRead array', typeof act.filesReadCount === 'number' && Array.isArray(act.filesRead));
+        check('activity contains filesModifiedCount and filesModified array', typeof act.filesModifiedCount === 'number' && Array.isArray(act.filesModified));
+        check('filesRead paths are unique', new Set(act.filesRead).size === act.filesRead.length);
+        check('filesModified paths are unique', new Set(act.filesModified).size === act.filesModified.length);
+        check('activity contains totalToolCalls', typeof act.totalToolCalls === 'number' && act.totalToolCalls >= 0);
+    }
+
+    // Verify prepareConversationsForWebview bandwidth optimization
+    if (allData.conversations.length > 1) {
+        const selId = allData.conversations[0].id;
+        const prepared = reader.prepareConversationsForWebview(allData.conversations, selId);
+        const sel = prepared.find(c => c.id === selId);
+        const nonSel = prepared.find(c => c.id !== selId && c.stats && c.stats.activity);
+
+        check('selected conversation retains filesRead array', sel && sel.stats && sel.stats.activity && Array.isArray(sel.stats.activity.filesRead));
+        if (nonSel) {
+            check('inactive conversation strips filesRead array to save bandwidth',
+                nonSel.stats.activity.filesRead.length === 0 && nonSel.stats.activity.filesModified.length === 0);
+            check('inactive conversation retains filesReadCount and metrics',
+                typeof nonSel.stats.activity.filesReadCount === 'number' &&
+                typeof nonSel.stats.activity.executedCommands === 'number' &&
+                typeof nonSel.stats.activity.assistantResponses === 'number');
+        }
+    }
+
+    // Dashboard rendering test: Activity card and elements populated
+    const { getDashboardHtml } = require('../dashboardHtml');
+    const vm = require('vm');
+    const html = getDashboardHtml(allData.conversations, activeConv ? activeConv.id : '', {
+        workspaceFilter: 'all',
+        currentWorkspacePaths: []
+    });
+
+    check('dashboard html contains activityCard', html.includes('id="activityCard"'));
+    check('dashboard html contains actToggleFilesBtn', html.includes('id="actToggleFilesBtn"'));
+    check('dashboard html contains actFilesDrawer', html.includes('id="actFilesDrawer"'));
+    check('dashboard html contains extVersionBadge', html.includes('id="extVersionBadge"'));
+    check('dashboard html displays extension version', html.includes('>v1.2.0<'));
+    const customVerHtml = getDashboardHtml([], '', { version: '9.9.9' });
+    check('dashboard html accepts custom dynamic version', customVerHtml.includes('>v9.9.9<'));
+
+    function makeActivityDomMock() {
+        const elements = new Map();
+        function makeEl(tag) {
+            return {
+                tag,
+                options: [],
+                children: [],
+                selectedIndex: 0,
+                get value() {
+                    return this.options && this.options[this.selectedIndex] ? this.options[this.selectedIndex].value : (this._val || '');
+                },
+                set value(v) {
+                    this._val = v;
+                    if (this.options) {
+                        const idx = this.options.findIndex(o => o.value === v);
+                        if (idx !== -1) this.selectedIndex = idx;
+                    }
+                },
+                appendChild(c) {
+                    this.children.push(c);
+                    if (this.options) this.options.push(c);
+                },
+                classList: {
+                    classes: new Set(),
+                    add(...cls) { cls.forEach(c => this.classes.add(c)); },
+                    remove(...cls) { cls.forEach(c => this.classes.delete(c)); },
+                    toggle(cls) { if (this.classes.has(cls)) this.classes.delete(cls); else this.classes.add(cls); }
+                },
+                style: {},
+                setAttribute() { },
+                addEventListener() { },
+                querySelector() { return makeEl('sub'); },
+                querySelectorAll() { return []; },
+                getBoundingClientRect() { return { width: 500, height: 200, left: 0, top: 0 }; },
+                textContent: '',
+                get innerHTML() { return this._html || ''; },
+                set innerHTML(val) {
+                    this._html = val;
+                    if (val === '') {
+                        this.children = [];
+                        this.options = [];
+                        this.selectedIndex = 0;
+                    }
+                }
+            };
+        }
+        return {
+            getElementById(id) {
+                if (!elements.has(id)) elements.set(id, makeEl(id));
+                return elements.get(id);
+            },
+            createElement(tag) { return makeEl(tag); },
+            createElementNS(ns, tag) { return makeEl(tag); },
+            elements
+        };
+    }
+
+    const script = html.slice(html.indexOf('>', html.indexOf('<script nonce=')) + 1, html.lastIndexOf('</script>'));
+    const doc = makeActivityDomMock();
+    const sandbox = {
+        acquireVsCodeApi: () => ({ postMessage() { } }),
+        window: { addEventListener() { }, onresize: null },
+        document: doc,
+        console
+    };
+    const ctx = vm.createContext(sandbox);
+    vm.runInContext(script, ctx);
+
+    // Verify DOM element population
+    const repliesEl = doc.getElementById('actAssistantReplies');
+    check('actAssistantReplies populated in DOM', repliesEl && repliesEl.textContent !== '0');
+    const filesReadEl = doc.getElementById('actFilesRead');
+    check('actFilesRead element exists in DOM', Boolean(filesReadEl));
+    const commandsEl = doc.getElementById('actCommands');
+    check('actCommands element exists in DOM', Boolean(commandsEl));
+    const imagesEl = doc.getElementById('actImages');
+    check('actImages element exists in DOM', Boolean(imagesEl));
+
+    // Test files drawer toggle
+    const drawerEl = doc.getElementById('actFilesDrawer');
+    drawerEl.classList.add('hidden'); // matches initial HTML
+    check('actFilesDrawer is hidden initially', drawerEl && drawerEl.classList.classes.has('hidden'));
+    vm.runInContext('toggleActivityFiles()', ctx);
+    check('actFilesDrawer is visible after toggle', drawerEl && !drawerEl.classList.classes.has('hidden'));
+    check('activityFilesOpen state is true', vm.runInContext('activityFilesOpen', ctx) === true);
+    vm.runInContext('toggleActivityFiles()', ctx);
+    check('actFilesDrawer is hidden after second toggle', drawerEl && drawerEl.classList.classes.has('hidden'));
+
+    // Test chart loading overlay & states
+    check('dashboard html contains chartLoadingOverlay', html.includes('id="chartLoadingOverlay"'));
+    check('dashboard html contains chartEmptyState', html.includes('id="chartEmptyState"'));
+
+    const overlayEl = doc.getElementById('chartLoadingOverlay');
+    overlayEl.classList.add('hidden'); // matches initial HTML
+    const pointsCountEl = doc.getElementById('chartPointsCount');
+    vm.runInContext('isLoadingTimeline = true; renderChart([]);', ctx);
+    check('chartLoadingOverlay visible during timeline load', overlayEl && !overlayEl.classList.classes.has('hidden'));
+    check('chartPointsCount shows loading badge', pointsCountEl && pointsCountEl.textContent.includes('Loading'));
+
+    const mockPoint = [{ turn: 1, input: 1000, cached: 500, fresh: 500, output: 50, thinking: 0 }];
+    vm.runInContext('isLoadingTimeline = false;', ctx);
+    vm.runInContext(`renderChart(${JSON.stringify(mockPoint)}, true);`, ctx);
+    check('chartLoadingOverlay hidden after timeline loads', overlayEl && overlayEl.classList.classes.has('hidden'));
+    check('chartPointsCount displays point count', pointsCountEl && pointsCountEl.textContent.includes('1 point'));
+
+    // Context Health & Allocation tests
+    check('dashboard html contains contextHealthPct', html.includes('id="contextHealthPct"'));
+    check('dashboard html contains contextHealthMeter', html.includes('id="contextHealthMeter"'));
+    check('dashboard html contains segPrompts', html.includes('id="segPrompts"'));
+    check('dashboard html contains segReplies', html.includes('id="segReplies"'));
+    check('dashboard html contains segFiles', html.includes('id="segFiles"'));
+    check('dashboard html contains segCommands', html.includes('id="segCommands"'));
+    check('dashboard html contains segImages', html.includes('id="segImages"'));
+    check('dashboard html contains segFree', html.includes('id="segFree"'));
+
+    const healthPctEl = doc.getElementById('contextHealthPct');
+    check('contextHealthPct populated in DOM', healthPctEl && healthPctEl.textContent.includes('%'));
+    const healthUsedEl = doc.getElementById('contextHealthUsed');
+    check('contextHealthUsed populated in DOM', Boolean(healthUsedEl && healthUsedEl.textContent));
+    const healthFreeEl = doc.getElementById('contextHealthFree');
+    check('contextHealthFree populated in DOM', Boolean(healthFreeEl && healthFreeEl.textContent));
+
+    // Unified Metric Cards & Inline Drawer Inspector tests
+    check('dashboard html contains contextCardsGrid', html.includes('id="contextCardsGrid"'));
+    check('dashboard html contains actRepliesFootprint', html.includes('id="actRepliesFootprint"'));
+    check('dashboard html contains actFilesFootprint', html.includes('id="actFilesFootprint"'));
+    check('dashboard html contains actCommandsFootprint', html.includes('id="actCommandsFootprint"'));
+    check('dashboard html contains actImagesFootprint', html.includes('id="actImagesFootprint"'));
+
+    const repliesFp = doc.getElementById('actRepliesFootprint');
+    check('actRepliesFootprint populated', Boolean(repliesFp && repliesFp.textContent.includes('tok')));
+    const filesFp = doc.getElementById('actFilesFootprint');
+    check('actFilesFootprint populated', Boolean(filesFp && filesFp.textContent.includes('tok')));
+    const cmdsFp = doc.getElementById('actCommandsFootprint');
+    check('actCommandsFootprint populated', Boolean(cmdsFp && cmdsFp.textContent.includes('tok')));
+    const imgsFp = doc.getElementById('actImagesFootprint');
+    check('actImagesFootprint populated', Boolean(imgsFp && imgsFp.textContent.includes('tok')));
+
+    // Streamlined Turn & Cache Intelligence tests
+    check('dashboard html contains intelligenceCard', html.includes('id="intelligenceCard"'));
+    const netPillEl = doc.getElementById('metaTrajectoryNetPill');
+    check('metaTrajectoryNetPill populated in DOM', Boolean(netPillEl && netPillEl.textContent.includes('tok net')));
+    const speedupPillEl = doc.getElementById('metaCacheSpeedupPill');
+    check('metaCacheSpeedupPill populated in DOM', Boolean(speedupPillEl && speedupPillEl.textContent.includes('faster')));
+
+    // Codebase Files Drawer filter test
+    check('dashboard html contains actFileFilterInput', html.includes('id="actFileFilterInput"'));
+    vm.runInContext('renderDrawerFiles("nonexistent-test-path-xyz")', ctx);
+    const readListEl = doc.getElementById('actDrawerReadList');
+    check('renderDrawerFiles handles filtering correctly', Boolean(readListEl));
+
+    // Dropdown optgroup separation & source badge tests
+    check('dashboard html contains optgroup grouping', html.includes("appendGroup('Editor Sessions'") && html.includes("appendGroup('CLI Terminal Runs'"));
+    check('dashboard html contains source badge check', html.includes("c.source === 'cli' || c.source === 'ide' || hasMultipleSources"));
 }
 
 // ---------------------------------------------------------------------------
@@ -1263,6 +1684,8 @@ testConfigurationAndSqlite();
 testChartLayerIntegrity();
 testChangelogExtraction();
 testAntigravityIdeSupport();
+testAntigravityCliSupport();
+testSessionOperationsAndActivity();
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

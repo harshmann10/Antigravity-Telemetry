@@ -3,6 +3,175 @@
 Technical and architectural notes for Antigravity Telemetry, grouped by development and review phases.
 For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 
+## 2026-10-22 — Phase 9: Multi-Tier Active Selection, All Workspaces Parity & Dropdown Optgroups
+
+**Task 1 — Active Session Anti-Hijacking Hierarchy**
+- Solved the active session race condition in `telemetryReader.js`:
+  - When background CLI jobs (`agy`) or long-running subagents ran concurrently, `selectActiveConversation()` matched `c.isRunning` before checking `c.source !== 'cli'`, prematurely flipping the VS Code status bar and webview focus mid-session.
+  - Implemented a strict 4-tier selection order:
+    1. `runningHost`: Running chat in VS Code extension or Antigravity IDE (top priority).
+    2. `runningCli`: Running chat in Antigravity CLI (second priority, only when editor chat is idle).
+    3. `hostChat`: Most recent idle editor/IDE chat (prevents background idle CLI runs from superseding the editor).
+    4. Fallback: Any non-subagent, then the first entry.
+
+**Task 2 — Dual-Stage Workspace Scoping & All Workspaces Parity**
+- Eliminated upstream CLI pruning in `telemetryReader.js`:
+  - Previously, `readAllTelemetry()` discarded non-matching CLI sessions with `continue;` during the SQLite load in `auto` mode. As a result, switching the webview workspace dropdown to "All Workspaces" hid foreign CLI sessions.
+  - Resolved by retaining all conversations in the backend `CONVERSATIONS` array and relying on dual-stage view-level scoping:
+    - Status bar and QuickPick scope via `getVisibleConversations()` in `extension.js`.
+    - Webview dropdown and list scope via `getWorkspaceFilteredConversations()` in `dashboardHtml.js`.
+  - "All Workspaces" now accurately aggregates all sessions across all workspaces and roots.
+
+**Task 3 — Dropdown Optgroup Segmentation & Persistent Origin Badges**
+- Refactored `populateDropdown()` in `dashboardHtml.js`:
+  - Dynamically groups sessions into `<optgroup label="Editor Sessions">` and `<optgroup label="CLI Terminal Runs">` when multiple sources are detected, preventing one-off terminal runs from cluttering the primary chat selector.
+  - Removed the `hasMultipleSources.size > 1` gate from `cli` and `ide` badges in both the session list and detail view, ensuring origin provenance is permanently visible even in isolated views.
+
+**Task 4 — Verification Suite Expansion (285 tests)**
+- Added unit and integration tests to Section 13 and Section 14 in `scripts/self-check.js` covering `runningHost > runningCli` priority, `<optgroup>` rendering, and persistent source badge visibility. All 285 tests pass with 0 failures.
+
+## 2026-10-20 — Phase 8: Context Health & Intelligence Hub (CLI `/context` Issue #3)
+
+**Task 1 — Hero Context Health Diagnostic Bar & Live Capacity Meter**
+- Elevated the webview dashboard beyond static terminal replication by introducing a live health diagnostic hero container:
+  - Displays dynamic capacity fill percentage against ceiling limit (`Health Diagnostic: X% in use of [Limit]`).
+  - Live headroom calculation showing exact remaining tokens before compaction (`X tok used · Y tok headroom remaining`).
+  - Dynamic tri-state color status pill and progress bar gradient:
+    - 🟢 Optimal (`< 60%`): Emerald gradient (`from-emerald-500 to-teal-400`) and "Optimal" badge.
+    - 🟡 Moderate Load (`60% - 85%`): Amber gradient (`from-amber-500 to-yellow-400`) and "Moderate Load" badge.
+    - 🔴 Compaction Alert (`> 85%`): Rose gradient (`from-rose-500 to-red-400`) and "Compaction Alert" badge.
+
+**Task 2 — Interactive Segmented Context Allocation Bar**
+- Added a multi-part segmented meter visually distributing the context window across operational components:
+  - User Prompts (Blue), Assistant Responses (Purple), In-Memory Files (Cyan), Executed Commands (Emerald), Analyzed Images (Amber), and Free Headroom (Muted).
+  - Includes hover tooltips detailing exact token counts and ceiling shares, plus a micro-legend row with per-component context shares.
+
+**Task 3 — Unified High-Density Activity & Capacity Cards (UX Simplification)**
+- Eliminated terminal image-bias redundancy by removing the static 8-row table and view-switcher toggle in favor of a single unified dashboard layout:
+  - Reclaimed >240px of vertical viewport while preserving all telemetry metrics.
+  - Enhanced 4 core metric cards with proportional token footprint pills (`~X tok (Y%)`) and autonomy ratios.
+  - Streamlined "Files in Memory" card by relying on the top "Files Touched" drawer button, eliminating redundant nested inspect controls.
+  - Merged stacked progress bars into a single unified segmented allocation bar with reactive health border styling (optimal, moderate, compaction alert).
+  - Upgraded micro-legend to a responsive 3-column / 6-column grid (`grid-cols-3 sm:grid-cols-6`) preventing irregular wrapping on narrow panels.
+  - Aligned Images card color palette to amber and refined sub-label to direct image capture count (`X captures processed`).
+
+**Task 4 — Codebase Files Drawer Enhancements**
+- Added an instant path & extension filter input (`#actFileFilterInput`) allowing instant live searching across in-memory and modified files.
+- Added color-coded file extension badges (`.js`, `.ts`, `.py`, `.json`, `.md`, `.css`, `.sql`, etc.) for fast visual scanning.
+- Retained remote SSH bandwidth decimation and webview cache preservation (`oldActivities`).
+
+**Task 5 — Streamlined Turn & Cache Intelligence**
+- Refactored Section 4 (`#intelligenceCard`) from 4 redundant KPI tiles into 3 dense, high-signal operational modules:
+  1. *Last Turn Execution*: Turn #, context size, fresh uncached input delta, model output volume, and compaction badge.
+  2. *Trajectory Dynamics*: Min $\rightarrow$ Current $\rightarrow$ Peak context, net expansion pill (`+X tok net`), and compaction count.
+  3. *Cache Acceleration*: Cache hit rate %, calls ratio, volume served from cache, cold start count, and estimated speedup multiplier (`~5.2x faster`).
+
+**Task 6 — Comprehensive Verification Suite Expansion (281 tests)**
+- Expanded Section 14 in `scripts/self-check.js` to test all new DOM elements, allocation bar segments, dual-view mode switcher toggling, diagnostic table population, and drawer filtering.
+- All 281 unit & integration tests pass with 0 failures.
+
+## 2026-10-18 — Phase 7: Session Operations & Activity Telemetry (Issue #3)
+
+**Task 1 — Core Metrics & Fast SQLite Activity Extraction**
+- Implemented Suggestion 2 from GitHub Issue #3 across all three supported environments (Antigravity CLI, VS Code Extension, and standalone Antigravity IDE).
+- Designed zero-dependency, ultra-fast SQLite aggregation querying the `steps` table in `<id>.db` across indexed `step_type` values:
+  - `step_type = 14`: User input prompts (`userPrompts`).
+  - `step_type = 15`: Model / assistant planner turns (`assistantResponses`).
+  - `step_type = 132`: Tool execution observations / results (`totalToolCalls`).
+  - Conditional string inspection on `step_payload`:
+    - `run_command`: Terminal commands executed (`executedCommands`).
+    - `invoke_subagent`: Background subagent delegations (`subagentsInvoked`).
+    - `read_url_content` / `search_web`: Web search and fetch requests (`webRequests`).
+    - `image/` / `browser_screenshot`: Image inputs analyzed (`analyzedImages`), reconciled against `.user_uploaded` folder in `brain/<id>/`.
+- Added regex path extraction on `AbsolutePath` and `TargetFile` attributes:
+  - `view_file` / `read_file`: Files read in memory (`filesReadCount`, `filesRead[]`).
+  - `replace_file_content` / `write_to_file`: Files modified or created (`filesModifiedCount`, `filesModified[]`).
+  - Normalized path delimiters via `path.normalize()` to eliminate duplicate path representations across Windows (`\`) and POSIX (`/`) tooling conventions.
+- Runs in < 30ms even on conversations with 350+ turns, falling back gracefully to defaults if the `steps` table is uninitialized.
+
+**Task 2 — Extended Metrics & Autonomy Ratio**
+- Extracted high-value metrics beyond Issue #3 scope:
+  - Autonomy Ratio (`turns/prompt`): Ratio of assistant responses per user prompt, indicating autonomous reasoning depth.
+  - Codebase impact split: Distinguishes read-only inspection files vs modified/created files.
+  - Total tool actions completed across all capabilities.
+
+**Task 3 — Webview IPC Bandwidth Optimization**
+- Updated `prepareConversationsForWebview` in `telemetryReader.js` so that inactive conversations strip heavy `filesRead` and `filesModified` arrays while preserving summary counts (`filesReadCount`, `filesModifiedCount`, `executedCommands`, `totalToolCalls`).
+- The active / selected conversation retains the full file path arrays for inspector rendering.
+- When selecting an inactive conversation, `extension.js` streams the full `activity` object alongside on-demand `timelineData`.
+
+**Task 4 — Interactive Webview "Session Operations & Activity" Card & Files Inspector**
+- Added a dedicated "Session Operations & Activity" card in `#detailView`:
+  - 4-metric KPI grid: Assistant Responses & Autonomy, Codebase Files touched, Executed Commands & Tools, Visual & Web operations.
+  - Header badge displaying combined files touched (`N read · M mod`).
+  - Interactive "Files Touched" toggle button that expands a collapsible two-column Files Inspector drawer:
+    - Left column: List of files read in memory with file basenames and truncated full paths.
+    - Right column: List of files modified or created with emerald badges.
+  - Compact operational indicator in session list rows (`· N tools`).
+  - Strictly compliant with CSP: Event listeners bound in `bindEvents()`, zero inline `onclick` handlers, flex viewport single-scroll layout.
+
+**Task 5 — Verification Suite Expansion (Section 14)**
+- Added Section 14 to `scripts/self-check.js` covering:
+  - `extractSessionActivity` schema validation and fallback safety.
+  - Telemetry read parity with real activity extraction across CLI, IDE, and Extension.
+  - Path deduplication and array uniqueness tests.
+  - Remote SSH bandwidth payload optimization verification.
+  - Synthetic DOM rendering, activity KPI population, and files drawer toggle state management.
+
+**Task 6 — Heavy Chat Loading Indicator & Drawer Visual States**
+- Added visual feedback when switching to heavy chats while on-demand turn timeline arrays and detailed file lists are streamed over IPC:
+  - Chart Loading Overlay (`#chartLoadingOverlay`): Semi-transparent backdrop with spinning indicator and text `Loading trajectory timeline (X turns)...`, preventing the perception of a broken blank graph.
+  - Pulsing Points Badge (`#chartPointsCount`): Pulses with `Loading turns...` in blue while the request is in flight, transitioning cleanly to `X points` on completion.
+  - Empty Chart State (`#chartEmptyState`): Displays a clean centered `No turns recorded yet` message when switching to new sessions with 0 calls.
+  - Files Drawer Loading State: If the user opens the Files Touched drawer before the file list stream arrives, displays an animated `Loading X files in memory...` instead of a misleading "No files read" message.
+  - Silenced sqlite3 stderr in `extractSessionActivity` via `stdio: ['pipe', 'pipe', 'ignore']` for clean diagnostics on synthetic fixtures and locked databases.
+- Updated Section 14 in `scripts/self-check.js` to assert loading overlay, empty state, and transition behavior.
+- Rebuilt `media/dashboard.css` via Tailwind CLI and verified standalone packaging with `@vscode/vsce` (`antigravity-telemetry-1.1.1.vsix`, 327.72 KB).
+- Total tests passing: **254 passed, 0 failed**.
+
+---
+
+## 2026-10-16 — Phase 6: Antigravity CLI Integration & Multi-Source Synthesis
+
+**Task 1 — CLI Installation Discovery & Data Source Consolidation**
+- Added Antigravity CLI root discovery (`~/.gemini/antigravity-cli`) supporting terminal `agy` sessions alongside IDE and Extension roots.
+- Consolidated `antigravity.dataSource` configuration options: replaced `"both"` with `"all"` (`["auto", "ide", "extension", "cli", "all"]`), maintaining seamless backward compatibility for existing configurations.
+- In `"auto"` mode, automatically discovers active or matching workspace CLI sessions without cluttering unrelated projects.
+
+**Task 2 — Multi-Catalog Cache Isolation**
+- Refactored `summariesCache` to a per-catalog cache map (`summariesCaches = new Map()`) keyed by canonical catalog path.
+- Prevented catalog eviction ping-pong between VS Code Extension and Antigravity CLI catalogs during heartbeats.
+
+**Task 3 — Session Execution State & Active Conversation Prioritization**
+- Decoded execution status (`CASCADE_RUN_STATUS_RUNNING` and `not_fully_idle`) from catalog protobuf metadata.
+- Updated `selectActiveConversation()` to prioritize actively running human sessions (including running CLI sessions) over idle sessions, while preventing background CLI processes from hijacking the status bar over host editor chats.
+
+**Task 4 — Visual Dashboard & QuickPick Integration**
+- Added emerald `[CLI]` badges with terminal icon in the Visual Dashboard conversation list and detail view.
+- Added terminal icons `$(terminal)` and `[CLI]` prefixes in History and Deletion QuickPick menus.
+- Extended zero-residue deletion to clean all 7 storage layers targeting CLI session directories.
+- Added Section 13 to `scripts/self-check.js` (190 passing tests total).
+
+**Task 5 — Multi-Level Subagent Hierarchy & Ancestor Chain Resolution**
+- Diagnosed issue where subagents spawned by other subagents (nesting depth $\ge 2$) were falsely grouped under "Unattached Subagents" with an "orphan" badge in the All Sessions view, despite correctly identifying their parent in the detail view.
+- Implemented `getRootConversation()` to recursively trace parent chains up to the root human chat, attaching multi-level subagents to their origin chat family.
+- Added recursive tree rendering (`renderSubagentTree`) in both the session list drawer and the detail view Subagents card, visually nesting child subagents under their parent worker with vertical indentation guides.
+- Added multi-level breadcrumb navigation in the detail view (`Main Chat → Subagent 1 → Subagent 2`), enabling clickable traversal up the entire delegation chain.
+- Backfilled `parentTitle` across merged multi-root catalogs in `readAllTelemetry()`.
+- Added synthetic nested hierarchy tests to Section 7 in `scripts/self-check.js` (193 tests passing).
+
+**Task 6 — Granular Individual Subagent Collapse / Expand Controls**
+- Implemented node-level subagent collapse and expand controls in addition to the global session drawer toggle (`expandedDrawers`):
+  - Added `collapsedSubagents` Set to track individually collapsed subagent nodes across background polling and telemetry updates.
+  - In `createConvRow`, added interactive left chevron arrow (`▾`/`▸`) and right toggle badge (`▾ X subagents`) on any subagent node that has child workers.
+  - In `renderSubagentTree`, recursively bound collapse/expand handlers to toggle child containers while preserving user state during background 10s heartbeats.
+  - Automatically uncollapsed intermediate subagents when matching active search queries to guarantee discoverability of nested results.
+  - In the detail view "Subagents & Background Workers" card, updated `renderDetailSubagentTree` so nested child workers can also be individually expanded or collapsed without toggling the entire parent card.
+  - Guaranteed zero CSP inline handler violations using `div.querySelector(...)` event listeners with `e.stopPropagation()` to prevent unwanted navigation.
+  - Added unit tests in `scripts/self-check.js` verifying toggle behavior in both the session list and detail card (207 tests passing).
+
+---
+
 ## 2026-10-15 — Phase 5: Remote SSH Bandwidth Optimization & Local Storage Architecture
 
 **Task 1 — Root Cause Diagnosis: Remote SSH Traffic Explosion**
@@ -34,8 +203,6 @@ For the user-facing release notes, see [`CHANGELOG.md`](./CHANGELOG.md).
 - Added `antigravity.enableCache` boolean setting (default `true`) to `package.json` with configuration change listener in `extension.js`.
 - Added interactive QuickMenu toggle: `$(archive) Persistent Startup Cache: Enabled / Disabled`.
 - When disabled, immediately cleans up any existing `telemetry-cache.json` on disk and bypasses disk writes, ensuring fresh on-demand SQLite parsing.
-
----
 
 ## 2026-10-11 — Phase 4: Antigravity IDE & Multi-Root Telemetry Support (Issue #1)
 
